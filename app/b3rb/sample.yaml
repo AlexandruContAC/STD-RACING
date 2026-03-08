@@ -1,0 +1,19 @@
+sample:
+  description: B3RB
+  name: B3RB
+common:
+  build_only: true
+tests:
+  b3rb.posix:
+    tags:
+      - b3rb
+    integration_platforms:
+      - native_sim
+  b3rb.mr_canhubk3:
+    tags:
+      - b3rb
+    integration_platforms:
+      - mr_canhubk3
+
+
+

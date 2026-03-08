@@ -1,0 +1,7 @@
+opencv-python-headless>=4.5
+numpy>=1.21
+pyusb>=1.2
+
+# Install inside a venv (Debian/Ubuntu block system-wide pip):
+#   python3 -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements.txt

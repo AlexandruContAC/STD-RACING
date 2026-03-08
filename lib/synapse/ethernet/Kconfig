@@ -1,0 +1,17 @@
+# Copyright (c) 2023, CogniPilot Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+config CEREBRI_SYNAPSE_ETHERNET
+  bool "Ethernet"
+  default y
+  depends on CEREBRI_SYNAPSE_ZROS
+  help
+    This option enables the synapse ethernet interface
+
+if CEREBRI_SYNAPSE_ETHERNET
+
+module = CEREBRI_SYNAPSE_ETHERNET
+module-str = synapse_ethernet
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # CEREBRI_SYNAPSE_ETHERNET
