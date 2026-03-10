@@ -29,11 +29,7 @@ rsync -avz --exclude='__pycache__' \
 
 if [ $? -eq 0 ]; then
     echo "================================================="
-    echo "Copying successful! Now compiling libpixyusb2 and get_raw_frame on NavQPlus..."
-    ssh "$REMOTE_USER@$REMOTE_HOST" "cd $REMOTE_DIR/pixy2/src/host/libpixyusb2/src && make clean && cd ../../../../scripts && ./build_libpixyusb2.sh && cd $REMOTE_DIR/get_raw_frame && make clean && make"
-    
-    echo "================================================="
-    echo "Deployment and build successful!"
+    echo "Deployment successful!"
     echo "To run the project on the NavQPlus, SSH into it:"
     echo "    ssh $REMOTE_USER@$REMOTE_HOST"
     echo "Then run:"

@@ -105,7 +105,7 @@ static void follow_line(context *ctx) {
   // vezi codul ScanLine pentru viteza published de nav q plus
 
   //steer = 0.5;
-  speed = 0;
+  //speed = 0.2;
 
   filter_refs(speed, steer, &speed_ref_f, &steer_ref_f, &last_ticks);
   b3rb_set_actuators(&ctx->actuators, steer_ref_f, speed_ref_f);

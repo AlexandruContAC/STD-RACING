@@ -37,19 +37,20 @@ THRESHOLD_VALUE = 35  # 0-255, pixels darker than this become white after INV
 # Row Y positions (0 = top).  Lower rows are closer to the car and are
 # weighted more heavily for steering.
 # ---------------------------------------------------------------------------
-SCAN_LINE_ROWS    = [190, 180, 160, 140, 120, 100]
-SCAN_LINE_WEIGHTS = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3]  # sum = 1.0
+SCAN_LINE_ROWS    = [90,110,130,150,170,190]
+SCAN_LINE_WEIGHTS = [0.3,0.25,0.2,0.15,0.1,0.05]  # sum = 1.0
 
 # Maximum / minimum allowed distance (in pixels) between the left and
 # right edges on a single scan row.  Rows outside this range are treated
 # as invalid (crossover or noise) and their weight is redistributed.
-MAX_LANE_WIDTH = 60
+
+MAX_LANE_WIDTH = 280
 MIN_LANE_WIDTH = 30
 
 # Assumed lane width in pixels.  Used for single-edge fallback: when only
 # one border is visible (e.g. sharp curve), the centre is estimated as
 # edge ± ASSUMED_LANE_WIDTH / 2.
-ASSUMED_LANE_WIDTH = 45
+ASSUMED_LANE_WIDTH = 280
 
 # ---------------------------------------------------------------------------
 # Steering

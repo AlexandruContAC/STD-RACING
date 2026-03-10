@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 
 from detection.scanline import ScanResult
+import config
 
 # Colours (BGR)
 _GREEN = (0, 255, 0)
@@ -38,11 +39,22 @@ def draw_debug(
         # Scan line
         cv2.line(vis, (0, row_y), (w - 1, row_y), _CYAN, 1)
 
-        # Edges
+        # MAX_LANE_WIDTH bracket (red) — shows expected lane width for debugging
+        half_max = config.MAX_LANE_WIDTH // 2
+        bracket_center = int(center) if center is not None else w // 2
+        bracket_left = max(bracket_center - half_max, 0)
+        bracket_right = min(bracket_center + half_max, w - 1)
+        # Horizontal bar
+        cv2.line(vis, (bracket_left, row_y), (bracket_right, row_y), _RED, 2)
+        # Vertical ticks at ends
+        cv2.line(vis, (bracket_left, row_y - 4), (bracket_left, row_y + 4), _RED, 2)
+        cv2.line(vis, (bracket_right, row_y - 4), (bracket_right, row_y + 4), _RED, 2)
+
+        # Edges (bright magenta so they stand out from the red bracket)
         if left is not None:
-            cv2.circle(vis, (left, row_y), 4, _RED, -1)
+            cv2.circle(vis, (left, row_y), 4, (255, 0, 255), -1)
         if right is not None:
-            cv2.circle(vis, (right, row_y), 4, _RED, -1)
+            cv2.circle(vis, (right, row_y), 4, (255, 0, 255), -1)
 
         # Per-row centre
         if center is not None:

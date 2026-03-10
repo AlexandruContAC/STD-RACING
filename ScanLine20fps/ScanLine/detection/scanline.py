@@ -2,11 +2,12 @@
 Scan-line-based track detection.
 
 For each configured horizontal row (scan line) in the binary image:
-  1. Scan from the left edge inward until a white (255) pixel is found →
-     that is the LEFT border.
-  2. Scan from the right edge inward until a white pixel is found → RIGHT
-     border.
-  3. Track center at that row = (left + right) / 2.
+  1. Scan from the LEFT edge inward to the MIDPOINT for the left border.
+  2. Scan from the RIGHT edge inward to the MIDPOINT for the right border.
+  3. Compute the lane center from the detected edges.
+
+This split-search ensures that when only one border is visible (e.g. sharp
+curve), the other side correctly returns None — enabling single-edge fallback.
 
 A weighted average across all rows yields a single track-center X that
 gives more importance to the rows closer to the car (bottom of image).
@@ -80,6 +81,7 @@ class ScanLineDetector:
         ScanResult
         """
         h, w = binary.shape[:2]
+        mid = w // 2
 
         left_edges: List[Optional[int]] = []
         right_edges: List[Optional[int]] = []
@@ -94,14 +96,30 @@ class ScanLineDetector:
 
             scan_row = binary[row_y, :]
 
-            left = self._find_edge_from_left(scan_row)
-            right = self._find_edge_from_right(scan_row)
+            # Split search: left half and right half independently
+            left = self._find_edge_left_half(scan_row, mid)
+            right = self._find_edge_right_half(scan_row, mid)
 
             left_edges.append(left)
             right_edges.append(right)
 
             center = self._compute_center(left, right, w)
             centers.append(center)
+
+        # ── Majority voting for single-edge detections ────────────────────────
+        only_left_count = sum(1 for l, r in zip(left_edges, right_edges) if l is not None and r is None)
+        only_right_count = sum(1 for l, r in zip(left_edges, right_edges) if r is not None and l is None)
+
+        if only_left_count > only_right_count:
+            # Left side is dominant; eliminate "only right" detections
+            for i in range(len(centers)):
+                if right_edges[i] is not None and left_edges[i] is None:
+                    centers[i] = None
+        elif only_right_count > only_left_count:
+            # Right side is dominant; eliminate "only left" detections
+            for i in range(len(centers)):
+                if left_edges[i] is not None and right_edges[i] is None:
+                    centers[i] = None
 
         weighted_center = self._weighted_center(centers)
 
@@ -114,7 +132,31 @@ class ScanLineDetector:
             image_width=w,
         )
 
-    # ── internals ─────────────────────────────────────────────────────────
+    # ── edge finding ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _find_edge_left_half(row: np.ndarray, mid: int) -> Optional[int]:
+        """Scan the LEFT half [0, mid) for the first white pixel (left→right).
+
+        Returns the X position of the left border, or None if no white pixel
+        exists in the left half of the row.
+        """
+        left_half = row[:mid]
+        indices = np.nonzero(left_half)[0]
+        return int(indices[0]) if len(indices) > 0 else None
+
+    @staticmethod
+    def _find_edge_right_half(row: np.ndarray, mid: int) -> Optional[int]:
+        """Scan the RIGHT half [mid, width) for the last white pixel (right→left).
+
+        Returns the X position of the right border, or None if no white pixel
+        exists in the right half of the row.
+        """
+        right_half = row[mid:]
+        indices = np.nonzero(right_half)[0]
+        return int(indices[-1] + mid) if len(indices) > 0 else None
+
+    # ── center computation ────────────────────────────────────────────────
 
     def _compute_center(
         self,
@@ -125,62 +167,58 @@ class ScanLineDetector:
         """
         Compute the lane centre for one scan row.
 
-        Cases:
-          • Both edges found & gap within bounds → midpoint.
-          • Only LEFT edge found  → left + half_lane (clamped to image).
-          • Only RIGHT edge found → right − half_lane (clamped to image).
-          • Neither edge / gap out of bounds → None.
+        Cases handled:
+          1. Both edges found & gap valid (MIN ≤ gap ≤ MAX) → midpoint.
+          2. Both edges found & gap < MIN → same border, single-edge fallback.
+          3. Both edges found & gap > MAX → noise/intersection, row rejected.
+          4. Only LEFT edge found  → left + half_lane (sharp right curve).
+          5. Only RIGHT edge found → right − half_lane (sharp left curve).
+          6. Neither edge found    → None (intersection/empty row, ignored).
         """
-        if left is not None and right is not None and right > left:
+        # ── Case: both edges found ────────────────────────────────────────
+        if left is not None and right is not None:
             lane_width = right - left
+
+            # Case 1: valid lane width
             if self._min_lane_width <= lane_width <= self._max_lane_width:
-                # Valid lane: gap is between MIN and MAX
                 return (left + right) / 2.0
-            elif lane_width < self._min_lane_width:
-                # Gap is too small: left and right points likely belong to the
-                # SAME dark line (e.g. thick track border).
-                # Treat it as a single edge located at the midpoint of the gap.
+
+            # Case 2: gap too small — both points are on the SAME border
+            # (redundancy check for sharp curves / camera distortion)
+            if lane_width < self._min_lane_width:
                 single_line_center = (left + right) / 2.0
-                
-                # Estimate if this single line is the left or right border
-                # based on which half of the image it's in
                 if single_line_center < (image_width / 2.0):
-                    # Line is on the left half -> assume it's the left border
+                    # Border is on the left half → treat as left border
                     return min(single_line_center + self._half_lane, image_width - 1)
                 else:
-                    # Line is on the right half -> assume it's the right border
+                    # Border is on the right half → treat as right border
                     return max(single_line_center - self._half_lane, 0)
-            else:
-                # Gap > MAX_LANE_WIDTH -> reject row (crossover/noise)
-                return None
 
-        # ── Single-edge fallback (sharp curves, only one point found) ────
+            # Case 3: gap too large — likely intersection or noise
+            return None
+
+        # ── Case 4: only left edge found (sharp right curve) ─────────────
         if left is not None and right is None:
             return min(left + self._half_lane, image_width - 1)
 
+        # ── Case 5: only right edge found (sharp left curve) ─────────────
         if right is not None and left is None:
             return max(right - self._half_lane, 0)
 
+        # ── Case 6: neither edge found (intersection / empty row) ────────
         return None
 
-    # ── internals ─────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _find_edge_from_left(row: np.ndarray) -> Optional[int]:
-        """Scan left→right for the first white pixel."""
-        indices = np.nonzero(row)[0]
-        return int(indices[0]) if len(indices) > 0 else None
-
-    @staticmethod
-    def _find_edge_from_right(row: np.ndarray) -> Optional[int]:
-        """Scan right→left for the first white pixel."""
-        indices = np.nonzero(row)[0]
-        return int(indices[-1]) if len(indices) > 0 else None
+    # ── weighted average ──────────────────────────────────────────────────
 
     def _weighted_center(
         self, centers: List[Optional[float]]
     ) -> Optional[float]:
-        """Compute weighted average of valid per-row centers."""
+        """Compute weighted average of valid per-row centers.
+
+        Rows where center is None (no edges, intersection, or noise) are
+        excluded from the sum and their weight is NOT counted — effectively
+        redistributing their influence to the remaining valid rows.
+        """
         total_weight = 0.0
         weighted_sum = 0.0
 
@@ -192,3 +230,4 @@ class ScanLineDetector:
         if total_weight == 0.0:
             return None
         return weighted_sum / total_weight
+

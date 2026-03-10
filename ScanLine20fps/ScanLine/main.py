@@ -27,12 +27,14 @@ from visualization import draw_debug
 from synapse_tinyframe import TinyFrameBuilder, SYNAPSE_CMD_VEL_TOPIC
 from synapse_msgs import encode_twist
 
+from foxglove_server import FoxgloveStreamer
+
 # ── CANHUB-K3 network configuration ──────────────────────────────────────
 CANHUBK3_IP = "192.0.2.1"   # CANHUB-K3 static IP (from prj.conf)
 CANHUBK3_PORT = 4242         # UDP port (from udp_rx.c MY_PORT)
 
 # ── Driving parameters ───────────────────────────────────────────────────
-FORWARD_SPEED = 0.2           # constant forward speed (linear.x)
+FORWARD_SPEED = 0.0           # constant forward speed (linear.x)
 
 
 def build_camera(backend: str):
@@ -47,6 +49,66 @@ def build_camera(backend: str):
         # return WebcamCamera()
     else:
         raise ValueError(f"Unknown camera backend: {backend}")
+
+
+def send_cmd_vel(tf, udp_sock, target_addr, steering: float, forward_speed: float):
+    """Send a cmd_vel message over UDP/TinyFrame."""
+    steer_value = float(steering) if steering is not None else 0.0
+    payload = encode_twist(linear_x=forward_speed, angular_z=steer_value)
+    frame_bytes = tf.build_frame(SYNAPSE_CMD_VEL_TOPIC, payload)
+    try:
+        udp_sock.sendto(frame_bytes, target_addr)
+    except OSError as e:
+        print(f"\r[ScanLine] UDP send error: {e}", end="")
+
+
+def run_manual_mode(tf, udp_sock, target_addr, camera, processor, detector, foxglove_streamer):
+    """Manual keyboard control via WASD keys with live camera feed for debugging."""
+    steering = 0.0
+    forward_speed = 0.0
+
+    print("[Manual] WASD to drive, Q to quit. Focus the camera window!")
+
+    while True:
+        # Capture + process the camera (for debugging view only)
+        frame = camera.read_frame()
+        binary = processor.process(frame)
+        result = detector.detect(binary)
+
+        # Overlay HUD on the camera frame
+        debug_frame = draw_debug(frame, result, steering)
+        cv2.putText(debug_frame, f"MANUAL  Speed:{forward_speed:+.2f}  Steer:{steering:+.2f}",
+                    (5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
+        cv2.putText(debug_frame, "WASD=drive  Q=quit",
+                    (5, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+        cv2.imshow("Manual Control", debug_frame)
+        cv2.imshow("Binary", binary)
+        
+        foxglove_streamer.update_debug_frame(debug_frame)
+        foxglove_streamer.update_binary_frame(binary)
+
+        key = cv2.waitKey(50) & 0xFF  # ~20 Hz update rate
+        if key == ord("q"):
+            break
+        elif key == ord("w"):
+            forward_speed += 0.1
+        elif key == ord("s"):
+            forward_speed -= 0.1
+        elif key == ord("a"):
+            steering += 0.1
+        elif key == ord("d"):
+            steering -= 0.1
+
+        # Clamp values to reasonable range
+        forward_speed = max(-1.0, min(1.0, forward_speed))
+        steering = max(-1.0, min(1.0, steering))
+
+        send_cmd_vel(tf, udp_sock, target_addr, steering, forward_speed)
+        print(f"  speed={forward_speed:+.2f}  steer={steering:+.2f}", end="\r")
+
+    # Stop the car when exiting manual mode
+    send_cmd_vel(tf, udp_sock, target_addr, 0.0, 0.0)
+    cv2.destroyAllWindows()
 
 
 def main() -> None:
@@ -92,7 +154,10 @@ def main() -> None:
 
     if show_display and not display_available:
         print("[ScanLine] No display detected. Switching to headless mode.")
-        show_display = True
+        show_display = False
+
+    foxglove_streamer = FoxgloveStreamer(port=8765)
+    foxglove_streamer.start()
 
     # ── Open camera ───────────────────────────────────────────────────────
     try:
@@ -107,8 +172,30 @@ def main() -> None:
     target_addr = (args.target_ip, args.target_port)
     print(f"[ScanLine] Sending cmd_vel to {target_addr[0]}:{target_addr[1]} via UDP/TinyFrame")
 
-    print("[ScanLine] Pipeline running. Press Ctrl+C to quit.")
-    #camera.set_lamp(True)
+    # ── Choose mode ───────────────────────────────────────────────────────
+    print("\nChoose mode:")
+    print("  0 - Auto (camera + scan-line steering)")
+    print("  1 - Manual (WASD keyboard control)")
+    mode = input("Enter mode [0/1]: ").strip()
+
+    if mode == "1":
+        # Manual mode — no camera needed for driving
+        try:
+            run_manual_mode(tf, udp_sock, target_addr, camera, processor, detector, foxglove_streamer)
+        except KeyboardInterrupt:
+            print("\n[ScanLine] Interrupted.")
+        finally:
+            send_cmd_vel(tf, udp_sock, target_addr, 0.0, 0.0)
+            udp_sock.close()
+            camera.close()
+            foxglove_streamer.stop()
+            cv2.destroyAllWindows()
+        print("[ScanLine] Done.")
+        return
+
+    # ── Auto mode ─────────────────────────────────────────────────────────
+    print("[ScanLine] Auto mode. Press Ctrl+C to quit.")
+    speed = 0.0
     try:
         while True:
             # 1. Capture
@@ -123,43 +210,45 @@ def main() -> None:
             # 4. Compute steering
             steering = controller.compute(result.weighted_center)
 
-            # 5. Send cmd_vel over UDP/TinyFrame
-            steer_value = float(steering) if steering is not None else 0.0
-            payload = encode_twist(linear_x=FORWARD_SPEED, angular_z=steer_value)
-            frame_bytes = tf.build_frame(SYNAPSE_CMD_VEL_TOPIC, payload)
-            try:
-                udp_sock.sendto(frame_bytes, target_addr)
-            except OSError as e:
-                print(f"\r[ScanLine] UDP send error: {e}", end="")
+            # 5. Send cmd_vel
+            send_cmd_vel(tf, udp_sock, target_addr, steering, speed)
 
             # 6. Log
             print(
                 f"fps={camera.get_frame_rate():.2f}  "
                 f"center={result.weighted_center!s:>8s}  "
-                f"steering={steering:+.4f}",
+                f"steering={steering:+.4f}  "
+                f"speed={speed:+.2f}",
                 end="\r",
             )
 
-            #7. Visualize (optional)
+            # 7. Visualize (optional)
+            debug_frame = draw_debug(frame, result, steering)
+            foxglove_streamer.update_debug_frame(debug_frame)
+            foxglove_streamer.update_binary_frame(binary)
+
             if show_display:
-                debug_frame = draw_debug(frame, result, steering)
                 cv2.imshow("ScanLine Debug", debug_frame)
                 cv2.imshow("Binary", binary)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
+
+            # 8. Handle keyboard input (single waitKey for all key events)
+            key = cv2.waitKey(50) & 0xFF
+            if key == ord("q"):
+                break
+            elif key == ord("w"):
+                speed += 0.1
+            elif key == ord("s"):
+                speed -= 0.1
+            FORWARD_SPEED = speed
 
     except KeyboardInterrupt:
         print("\n[ScanLine] Interrupted.")
     finally:
         # Send a stop command before exiting
-        try:
-            stop_payload = encode_twist(linear_x=0.0, angular_z=0.0)
-            stop_frame = tf.build_frame(SYNAPSE_CMD_VEL_TOPIC, stop_payload)
-            udp_sock.sendto(stop_frame, target_addr)
-        except OSError:
-            pass
+        send_cmd_vel(tf, udp_sock, target_addr, 0.0, 0.0)
         udp_sock.close()
         camera.close()
+        foxglove_streamer.stop()
         if show_display:
             cv2.destroyAllWindows()
 
