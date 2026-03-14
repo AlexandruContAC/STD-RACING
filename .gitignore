@@ -15,3 +15,7 @@ __pycache__/
 manifest-tmp/
 twister-out*
 .cache/
+.DS_Store
+**/.DS_Store
+.DS_Store
+**/.DS_Store

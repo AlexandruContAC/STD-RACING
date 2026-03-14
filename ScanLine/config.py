@@ -63,3 +63,11 @@ STEERING_KD = 0.01    # derivative gain (stubbed)
 # Visualization / debug
 # ---------------------------------------------------------------------------
 SHOW_DEBUG_WINDOW = True
+
+# ---------------------------------------------------------------------------
+# LIDAR (STL-27L DTOF) Configuration
+# ---------------------------------------------------------------------------
+LIDAR_PORT = "/dev/ttymxc2"            # UART port for the STL-27L on NavQ Plus
+LIDAR_BAUDRATE = 921600                # STL-27L baud rate (8N1, no flow control)
+LIDAR_BRAKE_THRESHOLD_CM = 10.0        # Emergency brake if obstacle closer than this (cm)
+LIDAR_FRONT_ANGLE_RANGE = (-45.0, 45.0)  # Forward 90° cone in degrees (0° = straight ahead)

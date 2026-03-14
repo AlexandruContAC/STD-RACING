@@ -21,6 +21,7 @@ import cv2
 import config
 from processing.pipeline import ImageProcessor
 from detection.scanline import ScanLineDetector
+from detection.lidar import LidarSensor
 from steering.controller import SteeringController
 from visualization import draw_debug
 
@@ -83,7 +84,7 @@ def run_manual_mode(tf, udp_sock, target_addr, camera, processor, detector, foxg
                     (5, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
         cv2.imshow("Manual Control", debug_frame)
         cv2.imshow("Binary", binary)
-        
+
         foxglove_streamer.update_debug_frame(debug_frame)
         foxglove_streamer.update_binary_frame(binary)
 
@@ -141,6 +142,12 @@ def main() -> None:
         default=CANHUBK3_PORT,
         help="CANHUB-K3 UDP port (default: %(default)s)",
     )
+    parser.add_argument(
+        "--lidar-port",
+        type=str,
+        default=config.LIDAR_PORT,
+        help="LIDAR serial port (default: %(default)s)",
+    )
     args = parser.parse_args()
 
     # ── Initialise components ─────────────────────────────────────────────
@@ -148,6 +155,14 @@ def main() -> None:
     processor = ImageProcessor(threshold=args.threshold)
     detector = ScanLineDetector()
     controller = SteeringController()
+
+    # ── Initialise LIDAR ───────────────────────────────────────────────────
+    lidar = LidarSensor(
+        port=args.lidar_port,
+        baudrate=config.LIDAR_BAUDRATE,
+        front_angle_range=config.LIDAR_FRONT_ANGLE_RANGE,
+    )
+    lidar.start()
 
     display_available = os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
     show_display = True
@@ -188,6 +203,7 @@ def main() -> None:
             send_cmd_vel(tf, udp_sock, target_addr, 0.0, 0.0)
             udp_sock.close()
             camera.close()
+            lidar.stop()
             foxglove_streamer.stop()
             cv2.destroyAllWindows()
         print("[ScanLine] Done.")
@@ -196,6 +212,7 @@ def main() -> None:
     # ── Auto mode ─────────────────────────────────────────────────────────
     print("[ScanLine] Auto mode. Press Ctrl+C to quit.")
     speed = 0.0
+    obstacle_was_detected = False  # tracks PREVIOUS frame's obstacle state
     try:
         while True:
             # 1. Capture
@@ -210,19 +227,40 @@ def main() -> None:
             # 4. Compute steering
             steering = controller.compute(result.weighted_center)
 
-            # 5. Send cmd_vel
-            send_cmd_vel(tf, udp_sock, target_addr, steering, speed)
+            # 5. LIDAR emergency braking check
+            lidar_dist_cm = lidar.get_front_distance() / 10.0  # mm → cm
+            obstacle_detected_now = lidar_dist_cm < config.LIDAR_BRAKE_THRESHOLD_CM
 
-            # 6. Log
+            if obstacle_detected_now:
+                actual_speed = 0.0     # full stop (100% brake)
+                steering = 0.0         # straighten wheels while braking
+                status_str = f"BRAKE! dist={lidar_dist_cm:.1f}cm"
+            else:
+                actual_speed = speed
+                status_str = f"speed={actual_speed:+.2f}"
+
+            # 5b. Log state transitions (only on change, not every frame)
+            if obstacle_detected_now and not obstacle_was_detected:
+                print(f"\n[LIDAR] OBSTACLE DETECTED at {lidar_dist_cm:.1f}cm — BRAKING!")
+            elif not obstacle_detected_now and obstacle_was_detected:
+                print(f"\n[LIDAR] Obstacle cleared — resuming normal driving.")
+
+            obstacle_was_detected = obstacle_detected_now
+
+            # 6. Send cmd_vel
+            send_cmd_vel(tf, udp_sock, target_addr, steering, actual_speed)
+
+            # 7. Log
             print(
                 f"fps={camera.get_frame_rate():.2f}  "
                 f"center={result.weighted_center!s:>8s}  "
                 f"steering={steering:+.4f}  "
-                f"speed={speed:+.2f}",
+                f"{status_str}  "
+                f"lidar={lidar_dist_cm:.0f}cm   ",
                 end="\r",
             )
 
-            # 7. Visualize (optional)
+            # 8. Visualize (optional)
             debug_frame = draw_debug(frame, result, steering)
             foxglove_streamer.update_debug_frame(debug_frame)
             foxglove_streamer.update_binary_frame(binary)
@@ -231,7 +269,7 @@ def main() -> None:
                 cv2.imshow("ScanLine Debug", debug_frame)
                 cv2.imshow("Binary", binary)
 
-            # 8. Handle keyboard input (single waitKey for all key events)
+            # 9. Handle keyboard input (single waitKey for all key events)
             key = cv2.waitKey(50) & 0xFF
             if key == ord("q"):
                 break
@@ -248,6 +286,7 @@ def main() -> None:
         send_cmd_vel(tf, udp_sock, target_addr, 0.0, 0.0)
         udp_sock.close()
         camera.close()
+        lidar.stop()
         foxglove_streamer.stop()
         if show_display:
             cv2.destroyAllWindows()
