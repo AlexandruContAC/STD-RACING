@@ -43,10 +43,8 @@ def build_camera(backend: str):
         from camera.pixy2_cam import Pixy2Camera
         return Pixy2Camera()
     elif backend == "webcam":
-        from camera.pixy2_cam import Pixy2Camera
-        return Pixy2Camera()
-        # from camera.webcam import WebcamCamera
-        # return WebcamCamera()
+        from camera.webcam import WebcamCamera
+        return WebcamCamera()
     else:
         raise ValueError(f"Unknown camera backend: {backend}")
 
@@ -77,12 +75,16 @@ def run_manual_mode(tf, udp_sock, target_addr, camera, processor, detector, foxg
 
         # Overlay HUD on the camera frame
         debug_frame = draw_debug(frame, result, steering)
+        angle, contour_img = detector.calculate_turn_angle(binary, draw_debug=True)
+
         cv2.putText(debug_frame, f"MANUAL  Speed:{forward_speed:+.2f}  Steer:{steering:+.2f}",
                     (5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
         cv2.putText(debug_frame, "WASD=drive  Q=quit",
                     (5, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
         cv2.imshow("Manual Control", debug_frame)
         cv2.imshow("Binary", binary)
+        if contour_img is not None:
+            cv2.imshow("Contours", contour_img)
         
         foxglove_streamer.update_debug_frame(debug_frame)
         foxglove_streamer.update_binary_frame(binary)
@@ -224,12 +226,16 @@ def main() -> None:
 
             # 7. Visualize (optional)
             debug_frame = draw_debug(frame, result, steering)
+            angle, contour_img = detector.calculate_turn_angle(binary, draw_debug=show_display)
+
             foxglove_streamer.update_debug_frame(debug_frame)
             foxglove_streamer.update_binary_frame(binary)
 
             if show_display:
                 cv2.imshow("ScanLine Debug", debug_frame)
                 cv2.imshow("Binary", binary)
+                if contour_img is not None:
+                    cv2.imshow("Contours", contour_img)
 
             # 8. Handle keyboard input (single waitKey for all key events)
             key = cv2.waitKey(50) & 0xFF

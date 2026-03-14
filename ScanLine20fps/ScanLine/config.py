@@ -30,34 +30,34 @@ CROP_WIDTH_FRACTION = 0.0
 # ---------------------------------------------------------------------------
 # Image processing
 # ---------------------------------------------------------------------------
-THRESHOLD_VALUE = 35  # 0-255, pixels darker than this become white after INV
+THRESHOLD_VALUE = 40  # 0-255, pixels darker than this become white after INV
 
 # ---------------------------------------------------------------------------
 # Scan line detection
 # Row Y positions (0 = top).  Lower rows are closer to the car and are
 # weighted more heavily for steering.
 # ---------------------------------------------------------------------------
-SCAN_LINE_ROWS    = [90,110,130,150,170,190]
-SCAN_LINE_WEIGHTS = [0.3,0.25,0.2,0.15,0.1,0.05]  # sum = 1.0
+SCAN_LINE_ROWS    = [90,110,120,130,150,170,190]
+SCAN_LINE_WEIGHTS = [0.1,0.15,0.2,0.2,0.15,0.1,0.05]  # sum = 1.0
 
 # Maximum / minimum allowed distance (in pixels) between the left and
 # right edges on a single scan row.  Rows outside this range are treated
 # as invalid (crossover or noise) and their weight is redistributed.
 
-MAX_LANE_WIDTH = 280
+MAX_LANE_WIDTH = 260
 MIN_LANE_WIDTH = 30
 
 # Assumed lane width in pixels.  Used for single-edge fallback: when only
 # one border is visible (e.g. sharp curve), the centre is estimated as
 # edge ± ASSUMED_LANE_WIDTH / 2.
-ASSUMED_LANE_WIDTH = 280
+ASSUMED_LANE_WIDTH = 290
 
 # ---------------------------------------------------------------------------
 # Steering
 # ---------------------------------------------------------------------------
-STEERING_KP = 0.007   # proportional gain
+STEERING_KP = 0.02   # proportional gain
 STEERING_KI = 0.0    # integral gain   (stubbed)
-STEERING_KD = 0.01    # derivative gain (stubbed)
+STEERING_KD = 0.02    # derivative gain (stubbed)
 
 # ---------------------------------------------------------------------------
 # Visualization / debug

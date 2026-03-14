@@ -47,7 +47,7 @@ class SteeringController:
         self._integral += error
         i = self._ki * self._integral
 
-        # D term (stubbed)
+        # D term
         d = self._kd * (error - self._prev_error)
         self._prev_error = error
 
