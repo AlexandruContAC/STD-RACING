@@ -134,6 +134,9 @@ def build_camera(backend: str):
     if backend == "pixy2":
         from camera.pixy2_cam import Pixy2Camera
         return Pixy2Camera()
+    elif backend == "pixy2fast":
+        from camera.pixy2fast_cam import Pixy2FastCamera
+        return Pixy2FastCamera()
     elif backend == "webcam":
         from camera.pixy2_cam import Pixy2Camera
         return Pixy2Camera()
@@ -207,7 +210,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="ScanLine track detector")
     parser.add_argument(
         "--camera",
-        choices=["pixy2", "webcam"],
+        choices=["pixy2", "webcam", "pixy2fast"],
         default=config.CAMERA_BACKEND,
         help="Camera backend to use (default: %(default)s)",
     )

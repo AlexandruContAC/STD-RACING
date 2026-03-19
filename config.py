@@ -4,9 +4,9 @@ All tunable parameters are collected here for easy adjustment.
 """
 
 # ---------------------------------------------------------------------------
-# Camera backend: "pixy2" | "webcam" | "mipi"
+# Camera backend: "pixy2" | "pixy2fast" | "webcam" | "mipi"
 # ---------------------------------------------------------------------------
-CAMERA_BACKEND = "webcam"
+CAMERA_BACKEND = "pixy2fast"
 WEBCAM_INDEX = 0  # /dev/video<N>
 
 # ---------------------------------------------------------------------------

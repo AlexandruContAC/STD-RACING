@@ -22,7 +22,7 @@ class ImageProcessor:
         """Convert a BGR frame to single-channel grayscale (no-op if already gray)."""
         if frame.ndim == 2 or (frame.ndim == 3 and frame.shape[2] == 1):
             return frame  # already grayscale — skip conversion
-        #return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         return frame
 
     def apply_threshold(
