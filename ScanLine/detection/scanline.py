@@ -18,7 +18,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-import cv2
 import numpy as np
 
 import config
@@ -67,54 +66,6 @@ class ScanLineDetector:
 
     # ── public ────────────────────────────────────────────────────────────
 
-    def calculate_turn_angle(self, binary: np.ndarray, draw_debug: bool = False) -> tuple[Optional[float], Optional[np.ndarray]]:
-        """
-        Finds the track contour based on the binary feed, smooths it over
-        with approxPolyDP, and then calculates the angle of that turn.
-        If draw_debug is True, returns a tuple of (angle, debug_bgr_image).
-        """
-        debug_img = None
-        if draw_debug:
-            debug_img = cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
-
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return None, debug_img
-
-        # Find the largest contour by length (since lane lines might have 0 area)
-        largest_contour = max(contours, key=lambda c: cv2.arcLength(c, closed=False))
-
-        # Smooth contour with approxPolyDP
-        epsilon = 0.02 * cv2.arcLength(largest_contour, closed=False)
-        approx = cv2.approxPolyDP(largest_contour, epsilon, closed=False)
-
-        if draw_debug:
-            cv2.drawContours(debug_img, [largest_contour], -1, (255, 0, 0), 1) # Blue original contour
-            cv2.drawContours(debug_img, [approx], -1, (0, 0, 255), 2) # Red approx contour
-
-        if len(approx) < 2:
-            return None, debug_img
-
-        # Fit a line to the approximated contour to find the general angle
-        [vx, vy, x, y] = cv2.fitLine(approx, cv2.DIST_L2, 0, 0.01, 0.01)
-        
-        if draw_debug:
-            # Draw the fitted line (green)
-            mult = max(binary.shape[0], binary.shape[1])
-            p1 = (int(x[0] - mult*vx[0]), int(y[0] - mult*vy[0]))
-            p2 = (int(x[0] + mult*vx[0]), int(y[0] + mult*vy[0]))
-            cv2.line(debug_img, p1, p2, (0, 255, 0), 2)
-
-        # Calculate the angle with respect to the vertical axis (y points down in image)
-        # Considering vehicle moves bottom-to-top, -vy points "forward"
-        angle_rad = np.arctan2(vx[0], -vy[0])
-        angle_deg = float(np.degrees(angle_rad))
-        
-        if draw_debug:
-            cv2.putText(debug_img, f"Angle: {angle_deg:+.2f} deg", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-
-        return angle_deg, debug_img
-
     def detect(self, binary: np.ndarray) -> ScanResult:
         """
         Run scan-line detection on a binary (thresholded) image.
@@ -155,22 +106,22 @@ class ScanLineDetector:
             center = self._compute_center(left, right, w)
             centers.append(center)
 
-            # ── Majority voting for single-edge detections ────────────────────────
-            only_left_count = sum(1 for l, r in zip(left_edges, right_edges) if l is not None and r is None)
-            only_right_count = sum(1 for l, r in zip(left_edges, right_edges) if r is not None and l is None)
-    
-            if only_left_count > only_right_count:
-                # Left side is dominant; eliminate "only right" detections
-                for i in range(len(centers)):
-                    if right_edges[i] is not None and left_edges[i] is None:
-                        centers[i] = None
-            elif only_right_count > only_left_count:
-                # Right side is dominant; eliminate "only left" detections
-                for i in range(len(centers)):
-                    if left_edges[i] is not None and right_edges[i] is None:
-                        centers[i] = None
-    
-            weighted_center = self._weighted_center(centers)
+        # ── Majority voting for single-edge detections ────────────────────────
+        only_left_count = sum(1 for l, r in zip(left_edges, right_edges) if l is not None and r is None)
+        only_right_count = sum(1 for l, r in zip(left_edges, right_edges) if r is not None and l is None)
+
+        if only_left_count > only_right_count:
+            # Left side is dominant; eliminate "only right" detections
+            for i in range(len(centers)):
+                if right_edges[i] is not None and left_edges[i] is None:
+                    centers[i] = None
+        elif only_right_count > only_left_count:
+            # Right side is dominant; eliminate "only left" detections
+            for i in range(len(centers)):
+                if left_edges[i] is not None and right_edges[i] is None:
+                    centers[i] = None
+
+        weighted_center = self._weighted_center(centers)
 
         return ScanResult(
             rows=list(self._rows),
@@ -253,8 +204,6 @@ class ScanLineDetector:
         # ── Case 5: only right edge found (sharp left curve) ─────────────
         if right is not None and left is None:
             return max(right - self._half_lane, 0)
-
-    
 
         # ── Case 6: neither edge found (intersection / empty row) ────────
         return None

@@ -2,7 +2,7 @@
 Proportional steering controller.
 
 error = image_center_x - detected_track_center
-steering = clamp(Kp * error, -1.0, 1.0)
+steering = clamp(Kp * error, -1.1, 1.1)
 
 Positive steering → turn right, negative → turn left.
 """
@@ -31,7 +31,7 @@ class SteeringController:
 
     def compute(self, track_center: float | None) -> float:
         """
-        Return a normalised steering value in [-1.0, 1.0].
+        Return a normalised steering value in [-1.1, 1.1].
 
         If *track_center* is None (track lost), returns 0.0.
         """
@@ -47,9 +47,9 @@ class SteeringController:
         self._integral += error
         i = self._ki * self._integral
 
-        # D term
+        # D term (stubbed)
         d = self._kd * (error - self._prev_error)
         self._prev_error = error
 
         steering = p + i + d
-        return max(-1.0, min(1.0, steering))
+        return max(-1.1, min(1.1, steering))

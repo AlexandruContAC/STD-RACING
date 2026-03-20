@@ -61,7 +61,7 @@ uint32_t filter_refs(double speed_ref, double steer_ref, double *speed_ref_f, do
 
     if(dt_ms>0) {
         filter_ref(speed_ref, speed_ref_f, dt_ms, -1, 1, 2, 4);
-        filter_ref(steer_ref, steer_ref_f, dt_ms, -1, 1, 5, 5);
+        filter_ref(steer_ref, steer_ref_f, dt_ms, -1.1, 1.1, 5, 5);
     }
     return dt_ms;
 }

@@ -44,10 +44,3 @@ class WebcamCamera(CameraBase):
             self._cap.release()
             self._cap = None
             print("[Webcam] Released.")
-
-    def get_frame_rate(self) -> float:
-        if self._cap is not None and self._cap.isOpened():
-            # CV_CAP_PROP_FPS is 5
-            fps = self._cap.get(cv2.CAP_PROP_FPS)
-            return float(fps) if fps > 0 else 30.0
-        return 0.0

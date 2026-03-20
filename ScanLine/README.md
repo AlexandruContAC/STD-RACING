@@ -90,4 +90,4 @@ Edit `config.py` to tune:
 2. For each row, the algorithm scans **inward from both edges** to find the first white pixel (track border).
 3. The **center** between left and right borders is computed per row.
 4. A **weighted average** across all rows gives the final track center, with closer (lower) rows weighted more.
-5. A proportional controller converts the offset between image center and track center into a steering value in `[-1.0, 1.0]`.
+5. A proportional controller converts the offset between image center and track center into a steering value in `[-1.1, 1.1]`.

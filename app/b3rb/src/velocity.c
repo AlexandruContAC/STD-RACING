@@ -4,7 +4,7 @@
  */
 
 #include "casadi/gen/b3rb.h"
-// #include "math.h"
+#include <math.h>
 
 #include <stdio.h>
 #include <zephyr/kernel.h>
@@ -17,6 +17,7 @@
 #include <zros/zros_pub.h>
 #include <zros/zros_sub.h>
 
+#include <synapse_topic_list.h>
 #include <cerebri/core/casadi.h>
 
 #include "mixing.h"
@@ -26,6 +27,17 @@
 
 LOG_MODULE_REGISTER(b3rb_velocity, CONFIG_CEREBRI_B3RB_LOG_LEVEL);
 
+/* ── Lap detection state machine ──────────────────────────────────────── */
+typedef enum {
+    STATE_NORMAL,
+    STATE_LAP_STARTED,
+    STATE_LAP_DONE
+} challenge_state_t;
+
+static double g_start_x = 0.0;
+static double g_start_y = 0.0;
+static bool g_initial_position_set = false;
+
 typedef struct _context {
   struct zros_node node;
   synapse_msgs_Twist cmd_vel;
@@ -33,11 +45,13 @@ typedef struct _context {
   synapse_msgs_Actuators actuators;
   synapse_msgs_Actuators actuators_manual;
   synapse_msgs_PixyVector pixy_vector;
+  synapse_msgs_Odometry odom;
   struct zros_sub sub_status, sub_cmd_vel, sub_actuators_manual,
-      sub_pixy_vector;
+      sub_pixy_vector, sub_odom;
   struct zros_pub pub_actuators;
   const double wheel_radius;
   const double wheel_base;
+  challenge_state_t state;
 } context;
 
 static context g_ctx = {
@@ -47,13 +61,49 @@ static context g_ctx = {
     .actuators = synapse_msgs_Actuators_init_default,
     .actuators_manual = synapse_msgs_Actuators_init_default,
     .pixy_vector = synapse_msgs_PixyVector_init_default,
+    .odom = synapse_msgs_Odometry_init_default,
     .sub_status = {},
     .sub_cmd_vel = {},
     .sub_actuators_manual = {},
+    .sub_odom = {},
     .pub_actuators = {},
     .wheel_radius = CONFIG_CEREBRI_B3RB_WHEEL_RADIUS_MM / 1000.0,
     .wheel_base = CONFIG_CEREBRI_B3RB_WHEEL_BASE_MM / 1000.0,
+    .state = STATE_NORMAL,
 };
+
+static void update_state(context *ctx) {
+  double x = ctx->odom.pose.pose.position.x;
+  double y = ctx->odom.pose.pose.position.y;
+
+  if (!g_initial_position_set) {
+    g_start_x = x;
+    g_start_y = y;
+    g_initial_position_set = true;
+    LOG_INF("Start position captured: x=%.2f y=%.2f", g_start_x, g_start_y);
+  }
+
+  double dx = x - g_start_x;
+  double dy = y - g_start_y;
+  double dist = sqrt(dx * dx + dy * dy);
+
+  switch (ctx->state) {
+  case STATE_NORMAL:
+    if (dist > 0.7) {
+      ctx->state = STATE_LAP_STARTED;
+      LOG_INF("Lap started (dist=%.2f)", dist);
+    }
+    break;
+  case STATE_LAP_STARTED:
+    if (dist < 0.4) {
+      ctx->state = STATE_LAP_DONE;
+      LOG_INF("Lap done (dist=%.2f) — slowing to 0.2", dist);
+    }
+    break;
+  case STATE_LAP_DONE:
+    break;
+  }
+}
 
 static void init_b3rb_vel(context *ctx) {
   LOG_DBG("init vel");
@@ -65,6 +115,8 @@ static void init_b3rb_vel(context *ctx) {
                 &ctx->actuators_manual, 10);
   zros_sub_init(&ctx->sub_pixy_vector, &ctx->node, &topic_pixy_vector,
                 &ctx->pixy_vector, 10);
+  zros_sub_init(&ctx->sub_odom, &ctx->node, &topic_estimator_odometry,
+                &ctx->odom, 10);
   zros_pub_init(&ctx->pub_actuators, &ctx->node, &topic_actuators,
                 &ctx->actuators);
 }
@@ -91,7 +143,13 @@ static void follow_line(context *ctx) {
   double steer = ctx->cmd_vel.angular.z;
   double speed = ctx->cmd_vel.linear.x;
 
-  printf("steer %f speed %f\n", steer, speed);
+  update_state(ctx);
+
+  if (ctx->state == STATE_LAP_DONE) {
+    speed = 0.2;
+  }
+
+  printf("steer %f speed %f state %d\n", steer, speed, ctx->state);
 
   static double steer_ref_f = 0, speed_ref_f = 0;
   static uint64_t last_ticks;
@@ -100,12 +158,7 @@ static void follow_line(context *ctx) {
     do_init_static = false;
     last_ticks = k_uptime_ticks();
   }
-  LOG_INF("steer %f speed %f\n", steer, speed);
-
-  // vezi codul ScanLine pentru viteza published de nav q plus
-
-  //steer = 0.5;
-  //speed = 0.2;
+  LOG_INF("steer %f speed %f state %d\n", steer, speed, ctx->state);
 
   filter_refs(speed, steer, &speed_ref_f, &steer_ref_f, &last_ticks);
   b3rb_set_actuators(&ctx->actuators, steer_ref_f, speed_ref_f);
@@ -120,6 +173,8 @@ static void b3rb_velocity_entry_point(void *p0, void *p1, void *p2) {
   ARG_UNUSED(p2);
 
   init_b3rb_vel(ctx);
+
+  synapse_msgs_Status_Mode prev_mode = synapse_msgs_Status_Mode_MODE_UNKNOWN;
 
   while (true) {
     synapse_msgs_Status_Mode mode = ctx->status.mode;
@@ -163,6 +218,10 @@ static void b3rb_velocity_entry_point(void *p0, void *p1, void *p2) {
     if (zros_sub_update_available(&ctx->sub_actuators_manual)) {
       zros_sub_update(&ctx->sub_actuators_manual);
     }
+
+    if (zros_sub_update_available(&ctx->sub_odom)) {
+      zros_sub_update(&ctx->sub_odom);
+    }
     // if (zros_sub_update_available(&ctx->sub_pixy_vector)) {
     //   zros_sub_update(&ctx->sub_pixy_vector);
     // }
@@ -175,6 +234,12 @@ static void b3rb_velocity_entry_point(void *p0, void *p1, void *p2) {
       LOG_DBG("manual mode");
       ctx->actuators = ctx->actuators_manual;
     } else if (ctx->status.mode == synapse_msgs_Status_Mode_MODE_AUTO) {
+      /* Reset lap detection when re-entering AUTO from another mode */
+      if (prev_mode != synapse_msgs_Status_Mode_MODE_AUTO) {
+        g_initial_position_set = false;
+        ctx->state = STATE_NORMAL;
+        LOG_INF("AUTO re-entered, lap state reset");
+      }
       LOG_DBG("auto mode");
       follow_line(ctx);
     } else {
@@ -187,6 +252,8 @@ static void b3rb_velocity_entry_point(void *p0, void *p1, void *p2) {
         &ctx->pub_actuators); // aici se copiaza valorile de steer si speed in
                               // actuators,in memoria globala zephyr,
     // lucru care trezeste toate nodurile abonate la acest topic
+
+    prev_mode = mode;
   }
 }
 

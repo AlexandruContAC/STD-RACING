@@ -4,9 +4,9 @@ All tunable parameters are collected here for easy adjustment.
 """
 
 # ---------------------------------------------------------------------------
-# Camera backend: "pixy2" | "webcam" | "mipi"
+# Camera backend: "pixy2" | "pixy2fast" | "webcam" | "mipi"
 # ---------------------------------------------------------------------------
-CAMERA_BACKEND = "webcam"
+CAMERA_BACKEND = "pixy2fast"
 WEBCAM_INDEX = 0  # /dev/video<N>
 
 # ---------------------------------------------------------------------------
@@ -30,44 +30,49 @@ CROP_WIDTH_FRACTION = 0.0
 # ---------------------------------------------------------------------------
 # Image processing
 # ---------------------------------------------------------------------------
-THRESHOLD_VALUE = 40  # 0-255, pixels darker than this become white after INV
+THRESHOLD_VALUE = 47  # 0-255, pixels darker than this become white after INV
 
 # ---------------------------------------------------------------------------
 # Scan line detection
 # Row Y positions (0 = top).  Lower rows are closer to the car and are
 # weighted more heavily for steering.
 # ---------------------------------------------------------------------------
-SCAN_LINE_ROWS    = [90,110,120,130,150,170,190]
-SCAN_LINE_WEIGHTS = [0.1,0.15,0.2,0.2,0.15,0.1,0.05]  # sum = 1.0
+SCAN_LINE_ROWS    = [190,185,180,175,170,165,160,155,150,145,140,135,130,125,120,115,110,105,100,90,80]
+# 23 lines. Distant lines (lower Y, e.g. 60) are at the end, so we give them higher weights.
+# The weights must sum to 1.0. Let's make an increasing sequence.
+# Sum is 1.0. The weights increase linearly towards the distant scanlines.
+SCAN_LINE_WEIGHTS = [0.010, 0.015, 0.020, 0.025, 0.030, 0.035, 0.040, 0.040, 0.040, 0.040, 0.045, 0.045, 0.045, 0.045, 0.050, 0.050, 0.050, 0.050, 0.055, 0.13, 0.14]  # sum = 1.0
 
 # Maximum / minimum allowed distance (in pixels) between the left and
 # right edges on a single scan row.  Rows outside this range are treated
 # as invalid (crossover or noise) and their weight is redistributed.
 
-MAX_LANE_WIDTH = 260
+MAX_LANE_WIDTH = 285
 MIN_LANE_WIDTH = 30
 
 # Assumed lane width in pixels.  Used for single-edge fallback: when only
 # one border is visible (e.g. sharp curve), the centre is estimated as
 # edge ± ASSUMED_LANE_WIDTH / 2.
-ASSUMED_LANE_WIDTH = 290
+ASSUMED_LANE_WIDTH = 320
 
 # ---------------------------------------------------------------------------
 # Steering
 # ---------------------------------------------------------------------------
 STEERING_KP = 0.02   # proportional gain
 STEERING_KI = 0.0    # integral gain   (stubbed)
-STEERING_KD = 0.02    # derivative gain (stubbed)
+STEERING_KD = 0.008    # derivative gain (stubbed)
 
-# ---------------------------------------------------------------------------
-# Visualization / debug
-# ---------------------------------------------------------------------------
-SHOW_DEBUG_WINDOW = True
+HEADLESS_SPEED = 0.9   # default auto-mode speed when no display is active
 
 # ---------------------------------------------------------------------------
 # LIDAR (STL-27L DTOF) Configuration
 # ---------------------------------------------------------------------------
 LIDAR_PORT = "/dev/ttymxc2"            # UART port for the STL-27L on NavQ Plus
 LIDAR_BAUDRATE = 921600                # STL-27L baud rate (8N1, no flow control)
-LIDAR_BRAKE_THRESHOLD_CM = 10.0        # Emergency brake if obstacle closer than this (cm)
+LIDAR_BRAKE_THRESHOLD_CM = 45.0        # Emergency brake if obstacle closer than this (cm)
 LIDAR_FRONT_ANGLE_RANGE = (-45.0, 45.0)  # Forward 90° cone in degrees (0° = straight ahead)
+
+# ---------------------------------------------------------------------------
+# Visualization / debug
+# ---------------------------------------------------------------------------
+SHOW_DEBUG_WINDOW = True
