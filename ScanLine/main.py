@@ -72,11 +72,11 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
             steering = controller.compute(result.weighted_center)
 
             if(steering > 0.8):
-                actual_speed = 0.8
+                actual_speed = 0.7
             elif(steering < -0.4):
-                actual_speed = 0.8
+                actual_speed = 0.7
             else:
-                actual_speed = 1
+                actual_speed = 0.9
 
             # 5. LIDAR emergency braking check
             lidar_dist_cm = lidar.get_front_distance() / 10.0  # mm → cm

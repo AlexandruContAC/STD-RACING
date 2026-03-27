@@ -74,9 +74,10 @@ static TF_Result cmd_vel_listener(TinyFrame *tf, TF_Msg *frame) {
   int rc = pb_decode(&stream, synapse_msgs_Twist_fields, &msg);
   if (rc) {
     zros_topic_publish(&topic_cmd_vel, &msg);
-    LOG_DBG("cmd_vel decoding\n");
+    printk("[DEBUG] cmd_vel OK: lin.x=%d ang.z=%d\n",
+            (int)(msg.linear.x * 1000), (int)(msg.angular.z * 1000));
   } else {
-    LOG_WRN("cmd_vel decoding failed: %s\n", PB_GET_ERROR(&stream));
+    printk("[DEBUG] cmd_vel FAIL\n");
   }
   return TF_STAY;
 }
@@ -190,8 +191,9 @@ static void run(void *p0, void *p1, void *p2) {
     // poll sockets and receive data
     int received = udp_rx_receive(&ctx->udp);
     if (received < 0) {
-      LOG_ERR("connection error: %d", errno);
+      printk("[DEBUG] UDP err\n");
     } else if (received > 0) {
+      printk("[DEBUG] UDP rx %d\n", received);
       TF_Accept(&ctx->tf, ctx->udp.rx_buf, received);
     }
 

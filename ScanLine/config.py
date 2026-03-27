@@ -62,7 +62,7 @@ STEERING_KP = 0.02   # proportional gain
 STEERING_KI = 0.0    # integral gain   (stubbed)
 STEERING_KD = 0.008    # derivative gain (stubbed)
 
-HEADLESS_SPEED = 0.9   # default auto-mode speed when no display is active
+HEADLESS_SPEED = 0.5   # default auto-mode speed when no display is active
 
 # ---------------------------------------------------------------------------
 # LIDAR (STL-27L DTOF) Configuration

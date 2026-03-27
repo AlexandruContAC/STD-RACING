@@ -4,7 +4,17 @@
  */
 
 #include "casadi/gen/b3rb.h"
-#include <math.h>
+
+/* Local math helpers to avoid linking libm */
+static inline double my_fabs(double x) { return x < 0.0 ? -x : x; }
+static double my_sqrt(double x) {
+  if (x <= 0.0) return 0.0;
+  double guess = x;
+  for (int i = 0; i < 20; i++) {
+    guess = 0.5 * (guess + x / guess);
+  }
+  return guess;
+}
 
 #include <stdio.h>
 #include <zephyr/kernel.h>
@@ -22,7 +32,7 @@
 
 #include "mixing.h"
 
-#define MY_STACK_SIZE 3072
+#define MY_STACK_SIZE 4096
 #define MY_PRIORITY 4
 
 LOG_MODULE_REGISTER(b3rb_velocity, CONFIG_CEREBRI_B3RB_LOG_LEVEL);
@@ -77,6 +87,10 @@ static void update_state(context *ctx) {
   double y = ctx->odom.pose.pose.position.y;
 
   if (!g_initial_position_set) {
+    /* Wait until the car is actually driving (main.py sending speed) */
+    if (my_fabs(ctx->cmd_vel.linear.x) < 0.05) {
+      return;
+    }
     g_start_x = x;
     g_start_y = y;
     g_initial_position_set = true;
@@ -85,17 +99,18 @@ static void update_state(context *ctx) {
 
   double dx = x - g_start_x;
   double dy = y - g_start_y;
-  double dist = sqrt(dx * dx + dy * dy);
+  double dist = my_sqrt(dx * dx + dy * dy);
+
 
   switch (ctx->state) {
   case STATE_NORMAL:
-    if (dist > 0.7) {
+    if (dist > 0.3) {
       ctx->state = STATE_LAP_STARTED;
       LOG_INF("Lap started (dist=%.2f)", dist);
     }
     break;
   case STATE_LAP_STARTED:
-    if (dist < 0.4) {
+    if (dist < 0.2) {
       ctx->state = STATE_LAP_DONE;
       LOG_INF("Lap done (dist=%.2f) — slowing to 0.2", dist);
     }
@@ -146,7 +161,13 @@ static void follow_line(context *ctx) {
   update_state(ctx);
 
   if (ctx->state == STATE_LAP_DONE) {
-    speed = 0.2;
+    if (my_fabs(speed) < 0.01) {
+      // LIDAR IS ACTIVE! Leave speed exactly at 0.0
+      speed = 0.0; 
+    } else {
+      // Normal driving. Cap speed to 0.2 because lap is done
+      speed = 0.2;
+    }
   }
 
   printf("steer %f speed %f state %d\n", steer, speed, ctx->state);
@@ -175,6 +196,9 @@ static void b3rb_velocity_entry_point(void *p0, void *p1, void *p2) {
   init_b3rb_vel(ctx);
 
   synapse_msgs_Status_Mode prev_mode = synapse_msgs_Status_Mode_MODE_UNKNOWN;
+
+  static int64_t cmd_vel_last_ticks = 0;
+  static bool cmd_vel_ever_received = false;
 
   while (true) {
     synapse_msgs_Status_Mode mode = ctx->status.mode;
@@ -213,6 +237,19 @@ static void b3rb_velocity_entry_point(void *p0, void *p1, void *p2) {
 
     if (zros_sub_update_available(&ctx->sub_cmd_vel)) {
       zros_sub_update(&ctx->sub_cmd_vel);
+      cmd_vel_last_ticks = k_uptime_ticks();
+      cmd_vel_ever_received = true;
+    }
+
+    /* Reset lap state when cmd_vel goes stale (main.py was closed) */
+    if (cmd_vel_ever_received) {
+      int64_t now = k_uptime_ticks();
+      if ((now - cmd_vel_last_ticks) > 2 * CONFIG_SYS_CLOCK_TICKS_PER_SEC) {
+        g_initial_position_set = false;
+        ctx->state = STATE_NORMAL;
+        cmd_vel_ever_received = false;
+        LOG_INF("cmd_vel lost - lap state reset");
+      }
     }
 
     if (zros_sub_update_available(&ctx->sub_actuators_manual)) {
