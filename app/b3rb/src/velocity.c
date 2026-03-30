@@ -88,13 +88,13 @@ static void update_state(context *ctx) {
 
   if (!g_initial_position_set) {
     /* Wait until the car is actually driving (main.py sending speed) */
-    if (my_fabs(ctx->cmd_vel.linear.x) < 0.05) {
+    if (my_fabs(ctx->cmd_vel.linear.x) < 0.1) {
       return;
     }
     g_start_x = x;
     g_start_y = y;
     g_initial_position_set = true;
-    LOG_INF("Start position captured: x=%.2f y=%.2f", g_start_x, g_start_y);
+    //LOG_INF("Start position captured: x=%.2f y=%.2f", g_start_x, g_start_y);
   }
 
   double dx = x - g_start_x;
@@ -104,15 +104,15 @@ static void update_state(context *ctx) {
 
   switch (ctx->state) {
   case STATE_NORMAL:
-    if (dist > 0.3) {
+    if (dist > 0.4) {
       ctx->state = STATE_LAP_STARTED;
-      LOG_INF("Lap started (dist=%.2f)", dist);
+      //LOG_INF("Lap started (dist=%.2f)", dist);
     }
     break;
   case STATE_LAP_STARTED:
-    if (dist < 0.2) {
+    if (dist < 0.3) {
       ctx->state = STATE_LAP_DONE;
-      LOG_INF("Lap done (dist=%.2f) — slowing to 0.2", dist);
+      //LOG_INF("Lap done (dist=%.2f) — slowing to 0.2", dist);
     }
     break;
   case STATE_LAP_DONE:

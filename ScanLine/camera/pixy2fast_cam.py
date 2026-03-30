@@ -478,6 +478,26 @@ class Pixy2FastCamera(CameraBase):
     def get_frame_rate(self) -> float:
         return self._fps
 
+    def set_lamps(self, upper: int, lower: int) -> None:
+        """Turn on/off the upper and lower lamps."""
+        if not self._initialised:
+            print("[Pixy2Fast] Cannot set lamps, camera not opened.")
+            return
+        
+        try:
+            p_ser_packet = self.client.require_proc("ser_packet")
+            
+            # PIXY_TYPE_REQUEST_LAMP = 0x16 (22)
+            # Args: type (CRP_INT8), data (CRP_ARRAY | CRP_INT8)
+            args = [
+                (0x01, 0x16),
+                (0x81, bytes([upper, lower]))
+            ]
+            self.client.call_sync(p_ser_packet, args)
+            print(f"[Pixy2Fast] Lamps set successfully (upper={upper}, lower={lower})")
+        except Exception as e:
+            print(f"[Pixy2Fast] Failed to set lamps: {e}")
+
     def close(self) -> None:
         self._stop_event.set()
         if self._reader_thread:

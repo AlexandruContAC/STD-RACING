@@ -15,12 +15,12 @@ import argparse
 import socket
 import sys
 import os
+import time
 
 # Force Qt to use xcb (X11) instead of wayland to avoid missing plugin crash
 os.environ["QT_QPA_PLATFORM"] = "xcb"
-
 import cv2
-
+import pixy2
 import config
 from processing.pipeline import ImageProcessor
 from detection.scanline import ScanLineDetector
@@ -40,10 +40,22 @@ CANHUBK3_PORT = 4242         # UDP port (from udp_rx.c MY_PORT)
 # ── Driving parameters ───────────────────────────────────────────────────
 FORWARD_SPEED = 0.0           # constant forward speed (linear.x)
 
+def get_speed_quadratic(steering_value):
+    # Ensure the input stays within bounds
+    x = max(-1.15, min(1.15, steering_value))
+    
+    # Calculate smooth speed drop
+    speed = 1.0 - (0.3403 * (x ** 2))
+    return speed
+
 def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_sock, target_addr, foxglove_streamer=None):
     print("[ScanLine] Auto mode. Press Ctrl+C to quit.")
     speed = config.HEADLESS_SPEED if not show_display else 0.0
     obstacle_was_detected = False
+    
+    fps_ema = 0.0
+    last_time = time.perf_counter()
+
     try:
         while True:
             #test cu lidar inainte de procesare de imagini pt franare mai resonsive
@@ -70,13 +82,12 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
 
             # 4. Compute steering
             steering = controller.compute(result.weighted_center)
-
-            if(steering > 0.8):
-                actual_speed = 0.7
-            elif(steering < -0.4):
-                actual_speed = 0.7
+                
+            #actual_speed = get_speed_quadratic(steering)
+            if(abs(steering) > 1.0):
+                actual_speed = 0.6
             else:
-                actual_speed = 0.9
+                actual_speed = 0.8
 
             # 5. LIDAR emergency braking check
             lidar_dist_cm = lidar.get_front_distance() / 10.0  # mm → cm
@@ -101,9 +112,17 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
             # 5. Send cmd_vel
             send_cmd_vel(tf, udp_sock, target_addr, steering, actual_speed)
 
+            # Calculate processing FPS after steering is calculated
+            current_time = time.perf_counter()
+            dt = current_time - last_time
+            last_time = current_time
+            if dt > 0:
+                current_fps = 1.0 / dt
+                fps_ema = (0.9 * fps_ema + 0.1 * current_fps) if fps_ema > 0 else current_fps
+
             # 6. Log
             print(
-                f"fps={camera.get_frame_rate():.2f}  "
+                f"fps={fps_ema:.1f}  "
                 f"center={result.weighted_center!s:>8s}  "
                 f"steering={steering:+.4f}  "
                 f"[{status_str}]          ",
@@ -118,7 +137,7 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
             if show_display:
                 cv2.imshow("ScanLine Debug", debug_frame)
                 cv2.imshow("Binary", binary)
-
+           
             # 8. Handle keyboard input (single waitKey for all key events)
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
@@ -139,7 +158,17 @@ def build_camera(backend: str):
         return Pixy2Camera()
     elif backend == "pixy2fast":
         from camera.pixy2fast_cam import Pixy2FastCamera
-        return Pixy2FastCamera()
+        cam = Pixy2FastCamera()
+        
+        # We need to open the camera first to be able to send the RPC command.
+        # `camera.open()` will be safely ignored when called again inside `main()`.
+        try:
+            cam.open()
+            cam.set_lamps(1, 1)  # upper=1 (on), lower=1 (on)
+        except Exception as e:
+            print(f"[Pixy2Fast] Could not set lamps at initialization: {e}")
+            
+        return cam
     elif backend == "webcam":
         from camera.pixy2_cam import Pixy2Camera
         return Pixy2Camera()
@@ -199,7 +228,7 @@ def run_manual_mode(tf, udp_sock, target_addr, camera, processor, detector):
 
         # Clamp values to reasonable range
         forward_speed = max(-1.0, min(1.0, forward_speed))
-        steering = max(-1.1, min(1.1, steering))
+        steering = max(-1.15, min(1.15, steering))
 
         send_cmd_vel(tf, udp_sock, target_addr, steering, forward_speed)
         print(f"  speed={forward_speed:+.2f}  steer={steering:+.2f}", end="\r")
@@ -210,6 +239,7 @@ def run_manual_mode(tf, udp_sock, target_addr, camera, processor, detector):
 
 
 def main() -> None:
+    
     parser = argparse.ArgumentParser(description="ScanLine track detector")
     parser.add_argument(
         "--camera",
@@ -259,22 +289,40 @@ def main() -> None:
         print("[ScanLine] No display detected. Switching to headless mode.")
         show_display = False
 
-    # ── Initialise LIDAR ───────────────────────────────────────────────────
+     # ── Initialise LIDAR ───────────────────────────────────────────────────
     lidar = LidarSensor(
         port=args.lidar_port,
         baudrate=config.LIDAR_BAUDRATE,
         front_angle_range=config.LIDAR_FRONT_ANGLE_RANGE,
     )
-    lidar.start()
+    lidar_connected = False
+    for i in range(10):  # Try for 10 seconds
+        if lidar.start():
+            lidar_connected = True
+            break
+        print(f"[WARNING] LIDAR not ready, retrying... ({i+1}/10)")
+        time.sleep(1)
+
+    if not lidar_connected:
+        print("[ERROR] LIDAR failed to initialize after 10 retries. Exiting.", file=sys.stderr)
+        sys.exit(1)
 
     #foxglove_streamer = FoxgloveStreamer(port=8765)
     #foxglove_streamer.start()
 
-    # ── Open camera ───────────────────────────────────────────────────────
-    try:
-        camera.open()
-    except RuntimeError as exc:
-        print(f"[ERROR] {exc}", file=sys.stderr)
+   # ── Open camera ───────────────────────────────────────────────────────
+    camera_connected = False
+    for i in range(10):  # Try for 10 seconds
+        try:
+            camera.open()
+            camera_connected = True
+            break
+        except RuntimeError as exc:
+            print(f"[WARNING] Camera not found, retrying... ({i+1}/10) - {exc}")
+            time.sleep(1)
+
+    if not camera_connected:
+        print("[ERROR] Camera failed to initialize after 10 retries. Exiting.", file=sys.stderr)
         sys.exit(1)
 
     # ── Initialize UDP socket + TinyFrame builder ─────────────────────────
@@ -312,6 +360,10 @@ def main() -> None:
     print("[ScanLine] Auto mode. Press Ctrl+C to quit.")
     speed = config.HEADLESS_SPEED if not show_display else 0.0
     obstacle_was_detected = False
+    
+    fps_ema = 0.0
+    last_time = time.perf_counter()
+
     try:
         while True:
             # 1. Capture
@@ -349,9 +401,17 @@ def main() -> None:
             # 5. Send cmd_vel
             send_cmd_vel(tf, udp_sock, target_addr, steering, actual_speed)
 
+            # Calculate processing FPS after steering is calculated
+            current_time = time.perf_counter()
+            dt = current_time - last_time
+            last_time = current_time
+            if dt > 0:
+                current_fps = 1.0 / dt
+                fps_ema = (0.9 * fps_ema + 0.1 * current_fps) if fps_ema > 0 else current_fps
+
             # 6. Log
             print(
-                f"fps={camera.get_frame_rate():.2f}  "
+                f"fps={fps_ema:.1f}  "
                 f"center={result.weighted_center!s:>8s}  "
                 f"steering={steering:+.4f}  "
                 f"[{status_str}]          ",

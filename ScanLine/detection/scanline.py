@@ -2,12 +2,12 @@
 Scan-line-based track detection.
 
 For each configured horizontal row (scan line) in the binary image:
-  1. Scan from the LEFT edge inward to the MIDPOINT for the left border.
-  2. Scan from the RIGHT edge inward to the MIDPOINT for the right border.
+  1. Scan from the MIDPOINT outward toward the LEFT edge for the left border.
+  2. Scan from the MIDPOINT outward toward the RIGHT edge for the right border.
   3. Compute the lane center from the detected edges.
 
-This split-search ensures that when only one border is visible (e.g. sharp
-curve), the other side correctly returns None — enabling single-edge fallback.
+Searching from the middle outward finds the nearest border to the car's
+center first, which is more robust on sharp curves.
 
 A weighted average across all rows yields a single track-center X that
 gives more importance to the rows closer to the car (bottom of image).
@@ -136,25 +136,27 @@ class ScanLineDetector:
 
     @staticmethod
     def _find_edge_left_half(row: np.ndarray, mid: int) -> Optional[int]:
-        """Scan the LEFT half [0, mid) for the first white pixel (left→right).
+        """Scan from the MIDPOINT outward toward the LEFT edge [mid-1 … 0].
 
-        Returns the X position of the left border, or None if no white pixel
-        exists in the left half of the row.
+        Returns the X position of the first white pixel found moving
+        leftward from the center, or None if no white pixel exists.
         """
         left_half = row[:mid]
         indices = np.nonzero(left_half)[0]
-        return int(indices[0]) if len(indices) > 0 else None
+        # Take the rightmost (closest to mid) white pixel
+        return int(indices[-1]) if len(indices) > 0 else None
 
     @staticmethod
     def _find_edge_right_half(row: np.ndarray, mid: int) -> Optional[int]:
-        """Scan the RIGHT half [mid, width) for the last white pixel (right→left).
+        """Scan from the MIDPOINT outward toward the RIGHT edge [mid … width).
 
-        Returns the X position of the right border, or None if no white pixel
-        exists in the right half of the row.
+        Returns the X position of the first white pixel found moving
+        rightward from the center, or None if no white pixel exists.
         """
         right_half = row[mid:]
         indices = np.nonzero(right_half)[0]
-        return int(indices[-1] + mid) if len(indices) > 0 else None
+        # Take the leftmost (closest to mid) white pixel
+        return int(indices[0] + mid) if len(indices) > 0 else None
 
     # ── center computation ────────────────────────────────────────────────
 

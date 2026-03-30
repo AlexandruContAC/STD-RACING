@@ -15,12 +15,12 @@ class SteeringController:
 
     def __init__(
         self,
-        image_width: int = config.FRAME_WIDTH,
+        center_x: int = config.CAMERA_CENTER_X,
         kp: float = config.STEERING_KP,
         ki: float = config.STEERING_KI,
         kd: float = config.STEERING_KD,
     ) -> None:
-        self._image_center = image_width / 2.0
+        self._image_center = float(center_x)
         self._kp = kp
         self._ki = ki
         self._kd = kd
@@ -52,4 +52,4 @@ class SteeringController:
         self._prev_error = error
 
         steering = p + i + d
-        return max(-1.1, min(1.1, steering))
+        return max(-1.15, min(1.15, steering))
