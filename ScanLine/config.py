@@ -39,10 +39,14 @@ THRESHOLD_VALUE = 42  # 0-255, pixels darker than this become white after INV
 # weighted more heavily for steering.
 # ---------------------------------------------------------------------------
 SCAN_LINE_ROWS    = [190,185,180,175,170,165,160,155,150,145,140,135,130,125,120,115,110,105,100]
-# 23 lines. Distant lines (lower Y, e.g. 60) are at the end, so we give them higher weights.
-# The weights must sum to 1.0. Let's make an increasing sequence.
-# Sum is 1.0. The weights increase linearly towards the distant scanlines.
-SCAN_LINE_WEIGHTS = [0.010, 0.015, 0.020, 0.025, 0.030, 0.035, 0.040, 0.040, 0.040, 0.040, 0.045, 0.045, 0.045, 0.045, 0.050, 0.050, 0.050, 0.050, 0.055]  # sum = 1.0
+INTERSECTION_ROW = 30
+def _get_weights(n: int, start: float = 0.010):
+    """Generate linearly increasing weights that sum exactly to 1.0."""
+    b = (1.0 - n * start) / (n * (n - 1) / 2)
+    return [start + b * i for i in range(n)]
+
+# The weights increase linearly towards the distant scanlines and sum to 1.0 exactly.
+SCAN_LINE_WEIGHTS = _get_weights(len(SCAN_LINE_ROWS))
 
 # Maximum / minimum allowed distance (in pixels) between the left and
 # right edges on a single scan row.  Rows outside this range are treated
@@ -54,14 +58,14 @@ MIN_LANE_WIDTH = 30
 # Assumed lane width in pixels.  Used for single-edge fallback: when only
 # one border is visible (e.g. sharp curve), the centre is estimated as
 # edge ± ASSUMED_LANE_WIDTH / 2.
-ASSUMED_LANE_WIDTH = 340
+ASSUMED_LANE_WIDTH = 355
 
 # ---------------------------------------------------------------------------
 # Steering
 # ---------------------------------------------------------------------------
-STEERING_KP = 0.0148  # proportional gain
+STEERING_KP = 0.0135  # proportional gain
 STEERING_KI = 0.0    # integral gain   (stubbed)
-STEERING_KD = 0.085 # derivative gain (stubbed)
+STEERING_KD = 0.0135 # derivative gain (stubbed)
 
 HEADLESS_SPEED = 0.5   # default auto-mode speed when no display is active
 
@@ -70,7 +74,7 @@ HEADLESS_SPEED = 0.5   # default auto-mode speed when no display is active
 # ---------------------------------------------------------------------------
 LIDAR_PORT = "/dev/ttymxc2"            # UART port for the STL-27L on NavQ Plus
 LIDAR_BAUDRATE = 921600                # STL-27L baud rate (8N1, no flow control)
-LIDAR_BRAKE_THRESHOLD_CM = 45.0        # Emergency brake if obstacle closer than this (cm)
+LIDAR_BRAKE_THRESHOLD_CM = 55.0        # Emergency brake if obstacle closer than this (cm)
 LIDAR_FRONT_ANGLE_RANGE = (-35.0, 35.0)  # Forward 90° cone in degrees (0° = straight ahead)
 
 # ---------------------------------------------------------------------------

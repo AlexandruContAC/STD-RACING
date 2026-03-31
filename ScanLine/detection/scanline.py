@@ -33,6 +33,11 @@ class ScanResult:
     centers: List[Optional[float]]      # per-row center
     weighted_center: Optional[float]    # combined weighted center X
     image_width: int                    # frame width for reference
+    # Intersection fallback data (None when not triggered)
+    intersection_row: Optional[int] = None
+    intersection_left: Optional[int] = None
+    intersection_right: Optional[int] = None
+    intersection_center: Optional[float] = None
 
 
 class ScanLineDetector:
@@ -121,7 +126,31 @@ class ScanLineDetector:
                 if left_edges[i] is not None and right_edges[i] is None:
                     centers[i] = None
 
-        weighted_center = self._weighted_center(centers)
+        # ── Intersection fallback ──────────────────────────────────────────
+        # The top 3 scan lines (rows 100, 105, 110 — last 3 in the array)
+        # are the farthest from the car.  If ALL three have no valid center
+        # it likely means the car is approaching an intersection.  Fall back
+        # to a single scan at INTERSECTION_ROW to get a heading.
+        top3_centers = centers[-3:]  # rows 110, 105, 100
+        int_center: Optional[float] = None
+        int_left: Optional[int] = None
+        int_right: Optional[int] = None
+        int_row_y: Optional[int] = None
+
+        if all(c is None for c in top3_centers):
+            int_row_y = config.INTERSECTION_ROW
+            if 0 <= int_row_y < h:
+                int_scan = binary[int_row_y, :]
+                int_left = self._find_edge_left_half(int_scan, mid)
+                int_right = self._find_edge_right_half(int_scan, mid)
+                int_center = self._compute_center(
+                    int_left, int_right, w
+                )
+
+        if int_center is not None:
+            weighted_center = int_center
+        else:
+            weighted_center = self._weighted_center(centers)
 
         return ScanResult(
             rows=list(self._rows),
@@ -130,6 +159,10 @@ class ScanLineDetector:
             centers=centers,
             weighted_center=weighted_center,
             image_width=w,
+            intersection_row=int_row_y if int_center is not None else None,
+            intersection_left=int_left if int_center is not None else None,
+            intersection_right=int_right if int_center is not None else None,
+            intersection_center=int_center,
         )
 
     # ── edge finding ──────────────────────────────────────────────────────

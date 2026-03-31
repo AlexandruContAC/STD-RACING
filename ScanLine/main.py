@@ -27,6 +27,7 @@ from detection.scanline import ScanLineDetector
 from detection.lidar import LidarSensor
 from steering.controller import SteeringController
 from visualization import draw_debug
+from lap_detector import LapDetector
 
 from synapse_tinyframe import TinyFrameBuilder, SYNAPSE_CMD_VEL_TOPIC
 from synapse_msgs import encode_twist
@@ -52,6 +53,11 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
     print("[ScanLine] Auto mode. Press Ctrl+C to quit.")
     speed = config.HEADLESS_SPEED if not show_display else 0.0
     obstacle_was_detected = False
+    driving_marked = False
+
+    # ── Lap detection via Zephyr odometry ─────────────────────────────────
+    lap_detector = LapDetector(listen_port=4242)
+    lap_detector.start()
     
     fps_ema = 0.0
     last_time = time.perf_counter()
@@ -84,10 +90,10 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
             steering = controller.compute(result.weighted_center)
                 
             #actual_speed = get_speed_quadratic(steering)
-            if(abs(steering) > 1.0):
-                actual_speed = 0.6
+            if(abs(steering) > 0.9):
+                actual_speed = 0.65
             else:
-                actual_speed = 0.8
+                actual_speed = 0.81
 
             # 5. LIDAR emergency braking check
             lidar_dist_cm = lidar.get_front_distance() / 10.0  # mm → cm
@@ -112,6 +118,17 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
             # 5. Send cmd_vel
             send_cmd_vel(tf, udp_sock, target_addr, steering, actual_speed)
 
+            # 5c. Mark driving started for lap detector (once)
+            if not driving_marked and abs(actual_speed) > 0.05:
+                lap_detector.mark_driving_started()
+                driving_marked = True
+
+            # 5d. Check lap detection
+            if lap_detector.check_lap_detected():
+                print("\n" + "=" * 50)
+                print("          🏁  LAP DETECTED  🏁")
+                print("=" * 50)
+
             # Calculate processing FPS after steering is calculated
             current_time = time.perf_counter()
             dt = current_time - last_time
@@ -121,11 +138,13 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
                 fps_ema = (0.9 * fps_ema + 0.1 * current_fps) if fps_ema > 0 else current_fps
 
             # 6. Log
+            lap_dist = lap_detector.get_distance()
             print(
                 f"fps={fps_ema:.1f}  "
                 f"center={result.weighted_center!s:>8s}  "
                 f"steering={steering:+.4f}  "
-                f"[{status_str}]          ",
+                f"[{status_str}]  "
+                f"dist={lap_dist:.2f}m          ",
                 end="\r",
             )
 
@@ -149,6 +168,8 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
         print("\n[ScanLine] Ctrl+C detected. Stopping car.")
         actual_speed = 0.0
         send_cmd_vel(tf, udp_sock, target_addr, steering, actual_speed)
+    finally:
+        lap_detector.stop()
     
 
 def build_camera(backend: str):

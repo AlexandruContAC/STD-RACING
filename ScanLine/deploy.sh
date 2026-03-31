@@ -22,6 +22,7 @@ rsync -avz \
     --include='visualization.py' \
     --include='synapse_msgs.py' \
     --include='synapse_tinyframe.py' \
+    --include='lap_detector.py' \
     --include='foxglove_server.py' \
     --include='pixy2.py' \
     --include='requirements.txt' \

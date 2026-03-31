@@ -110,7 +110,7 @@ static void update_state(context *ctx) {
     }
     break;
   case STATE_LAP_STARTED:
-    if (dist < 0.3) {
+    if (dist < 0.25) {
       ctx->state = STATE_LAP_DONE;
       //LOG_INF("Lap done (dist=%.2f) — slowing to 0.2", dist);
     }

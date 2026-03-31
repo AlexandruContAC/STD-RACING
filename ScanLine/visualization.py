@@ -14,6 +14,7 @@ _RED = (0, 0, 255)
 _CYAN = (255, 255, 0)
 _YELLOW = (0, 255, 255)
 _WHITE = (255, 255, 255)
+_ORANGE = (0, 165, 255)
 
 
 def draw_debug(
@@ -27,6 +28,7 @@ def draw_debug(
       • left edges (red circles)
       • right edges (red circles)
       • per-row centre (green circles)
+      • intersection scan line (orange, when active)
       • weighted centre (yellow vertical line)
       • steering arrow (green)
     """
@@ -59,6 +61,23 @@ def draw_debug(
         # Per-row centre
         if center is not None:
             cv2.circle(vis, (int(center), row_y), 4, _GREEN, -1)
+
+    # ── Intersection scan line (orange) ───────────────────────────────
+    if result.intersection_row is not None:
+        iy = result.intersection_row
+        # Full-width orange line
+        cv2.line(vis, (0, iy), (w - 1, iy), _ORANGE, 2)
+        # Detected edges
+        if result.intersection_left is not None:
+            cv2.circle(vis, (result.intersection_left, iy), 5, _ORANGE, -1)
+        if result.intersection_right is not None:
+            cv2.circle(vis, (result.intersection_right, iy), 5, _ORANGE, -1)
+        # Center
+        if result.intersection_center is not None:
+            cv2.circle(vis, (int(result.intersection_center), iy), 5, _GREEN, -1)
+        # Label
+        cv2.putText(vis, "INTERSECTION", (5, iy - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, _ORANGE, 1)
 
     # Weighted centre
     if result.weighted_center is not None:
