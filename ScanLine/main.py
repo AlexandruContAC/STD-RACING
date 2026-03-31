@@ -41,13 +41,56 @@ CANHUBK3_PORT = 4242         # UDP port (from udp_rx.c MY_PORT)
 # ── Driving parameters ───────────────────────────────────────────────────
 FORWARD_SPEED = 0.0           # constant forward speed (linear.x)
 
-def get_speed_quadratic(steering_value):
-    # Ensure the input stays within bounds
-    x = max(-1.15, min(1.15, steering_value))
-    
-    # Calculate smooth speed drop
-    speed = 1.0 - (0.3403 * (x ** 2))
-    return speed
+def is_finish_line(result) -> bool:
+    """Detect the start/finish dashes via ScanLine results.
+    Instead of assuming perfect centering, we look at the apparent 'lane width'.
+    Just in front of the car bumper (bottom rows), the track is physically wide (e.g., > 200px).
+    If the scanlines suddenly see a very narrow gap (< 120px) in the bottom
+    half of the image, we know those are the start line dashes!
+    """
+    if not result.left_edges or not result.right_edges:
+        return False
+
+    mid = result.image_width // 2
+    max_center_dev = result.image_width * 0.30  # Allows the car to be up to 30% off-center
+
+    hits = 0
+    consecutive_hits = 0
+    max_consecutive_hits = 0
+
+    # Only scan the first 10 rows (190 down to 145), which are closest to the car bumper.
+    # This completely ignores distant sharp curves which naturally shrink in width.
+    for i, (left, right) in enumerate(zip(result.left_edges, result.right_edges)):
+        if i >= 10:
+            break
+
+        if left is not None and right is not None:
+            lane_width = right - left
+            lane_center = (left + right) / 2.0
+
+            # 1. Very small gap (less than 120 px)
+            # 2. Gap is roughly near the car (avoids triggering on sheer noise near the far edges)
+            if lane_width < 120 and abs(lane_center - mid) < max_center_dev:
+                hits += 1
+                consecutive_hits += 1
+                if consecutive_hits > max_consecutive_hits:
+                    max_consecutive_hits = consecutive_hits
+            else:
+                consecutive_hits = 0
+        else:
+            consecutive_hits = 0
+
+    # Require at least 3 total hits, with 2 consecutive lines.
+    return hits >= 3 and max_consecutive_hits >= 2
+
+
+# def get_speed_quadratic(steering_value):
+#     # Ensure the input stays within bounds
+#     x = max(-1.15, min(1.15, steering_value))
+
+#     # Calculate smooth speed drop
+#     speed = 1.0 - (0.3403 * (x ** 2))
+#     return speed
 
 def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_sock, target_addr, foxglove_streamer=None):
     print("[ScanLine] Auto mode. Press Ctrl+C to quit.")
@@ -58,7 +101,11 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
     # ── Lap detection via Zephyr odometry ─────────────────────────────────
     lap_detector = LapDetector(listen_port=4242)
     lap_detector.start()
-    
+
+    # ── Vision Lap Detection ──────────────────────────────────────────────
+    vision_lap_done = False
+    race_start_time = time.perf_counter()
+
     fps_ema = 0.0
     last_time = time.perf_counter()
 
@@ -88,21 +135,32 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
 
             # 4. Compute steering
             steering = controller.compute(result.weighted_center)
-                
+
             #actual_speed = get_speed_quadratic(steering)
             if(abs(steering) > 0.9):
-                actual_speed = 0.65
+                actual_speed = 0.5
             else:
-                actual_speed = 0.81
+                actual_speed = 0.8
 
             # 5. LIDAR emergency braking check
             lidar_dist_cm = lidar.get_front_distance() / 10.0  # mm → cm
             obstacle_detected_now = lidar_dist_cm < config.LIDAR_BRAKE_THRESHOLD_CM
 
+            # 5a. Vision Lap Detection check
+            if not vision_lap_done and time.perf_counter() - race_start_time > 3.0:
+                if is_finish_line(result):
+                    print("\n[ScanLine] " + "=" * 50)
+                    print("[ScanLine]           🏁 VISION LAP DETECTED 🏁")
+                    print("[ScanLine] " + "=" * 50)
+                    vision_lap_done = True
+
             if obstacle_detected_now:
                 actual_speed = 0.0     # full stop (100% brake)
                 steering = 0.0         # straighten wheels while braking
                 status_str = f"BRAKE! dist={lidar_dist_cm:.1f}cm"
+            elif vision_lap_done:
+                actual_speed = 0.2     # Official Lap Done Cap
+                status_str = f"Slowed down by ScanLine to 0.2"
             else:
                 # keep actual_speed from steering logic above (0.8 or 0.9)
                 status_str = f"speed={actual_speed:+.2f}"
@@ -156,7 +214,7 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
             if show_display:
                 cv2.imshow("ScanLine Debug", debug_frame)
                 cv2.imshow("Binary", binary)
-           
+
             # 8. Handle keyboard input (single waitKey for all key events)
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
@@ -170,7 +228,7 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
         send_cmd_vel(tf, udp_sock, target_addr, steering, actual_speed)
     finally:
         lap_detector.stop()
-    
+
 
 def build_camera(backend: str):
     """Factory: return the appropriate CameraBase subclass."""
@@ -180,7 +238,7 @@ def build_camera(backend: str):
     elif backend == "pixy2fast":
         from camera.pixy2fast_cam import Pixy2FastCamera
         cam = Pixy2FastCamera()
-        
+
         # We need to open the camera first to be able to send the RPC command.
         # `camera.open()` will be safely ignored when called again inside `main()`.
         try:
@@ -188,7 +246,7 @@ def build_camera(backend: str):
             cam.set_lamps(1, 1)  # upper=1 (on), lower=1 (on)
         except Exception as e:
             print(f"[Pixy2Fast] Could not set lamps at initialization: {e}")
-            
+
         return cam
     elif backend == "webcam":
         from camera.pixy2_cam import Pixy2Camera
@@ -231,7 +289,7 @@ def run_manual_mode(tf, udp_sock, target_addr, camera, processor, detector):
                     (5, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
         cv2.imshow("Manual Control", debug_frame)
         cv2.imshow("Binary", binary)
-        
+
         #foxglove_streamer.update_debug_frame(debug_frame)
         #foxglove_streamer.update_binary_frame(binary)
 
@@ -260,7 +318,7 @@ def run_manual_mode(tf, udp_sock, target_addr, camera, processor, detector):
 
 
 def main() -> None:
-    
+
     parser = argparse.ArgumentParser(description="ScanLine track detector")
     parser.add_argument(
         "--camera",
@@ -381,7 +439,11 @@ def main() -> None:
     print("[ScanLine] Auto mode. Press Ctrl+C to quit.")
     speed = config.HEADLESS_SPEED if not show_display else 0.0
     obstacle_was_detected = False
-    
+
+    # ── Vision Lap Detection ──────────────────────────────────────────────
+    vision_lap_done = False
+    race_start_time = time.perf_counter()
+
     fps_ema = 0.0
     last_time = time.perf_counter()
 
@@ -403,10 +465,21 @@ def main() -> None:
             lidar_dist_cm = lidar.get_front_distance() / 10.0  # mm → cm
             obstacle_detected_now = lidar_dist_cm < config.LIDAR_BRAKE_THRESHOLD_CM
 
+            # 5a. Vision Lap Detection check
+            if not vision_lap_done and time.perf_counter() - race_start_time > 3.0:
+                if is_finish_line(result):
+                    print("\n[ScanLine] " + "=" * 50)
+                    print("[ScanLine]           🏁 VISION LAP DETECTED 🏁")
+                    print("[ScanLine] " + "=" * 50)
+                    vision_lap_done = True
+
             if obstacle_detected_now:
                 actual_speed = 0.0     # full stop (100% brake)
                 steering = 0.0         # straighten wheels while braking
                 status_str = f"BRAKE! dist={lidar_dist_cm:.1f}cm"
+            elif vision_lap_done:
+                actual_speed = 0.2     # Official Lap Done Cap
+                status_str = f"Slowed down by ScanLine to 0.2"
             else:
                 actual_speed = speed
                 status_str = f"speed={actual_speed:+.2f}"

@@ -74,7 +74,7 @@ HEADLESS_SPEED = 0.5   # default auto-mode speed when no display is active
 # ---------------------------------------------------------------------------
 LIDAR_PORT = "/dev/ttymxc2"            # UART port for the STL-27L on NavQ Plus
 LIDAR_BAUDRATE = 921600                # STL-27L baud rate (8N1, no flow control)
-LIDAR_BRAKE_THRESHOLD_CM = 55.0        # Emergency brake if obstacle closer than this (cm)
+LIDAR_BRAKE_THRESHOLD_CM = 35.0        # Emergency brake if obstacle closer than this (cm)
 LIDAR_FRONT_ANGLE_RANGE = (-35.0, 35.0)  # Forward 90° cone in degrees (0° = straight ahead)
 
 # ---------------------------------------------------------------------------
