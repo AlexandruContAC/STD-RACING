@@ -52,4 +52,4 @@ class SteeringController:
         self._prev_error = error
 
         steering = p + i + d
-        return max(-1.15, min(1.15, steering))
+        return max(-1.2, min(1.2, steering))

@@ -439,14 +439,14 @@ class Pixy2FastCamera(CameraBase):
         self.client.remote_init(block_size=64, hinterested=1)
         print("[Pixy2Fast] Chirp init OK.")
 
-        # Try to set max FPS (61) if possible — not all firmware exports this proc
+        # Try to set max FPS (50) to match EU lighting frequency and avoid flicker
         try:
             p_cam_set_framerate = self.client.get_proc("cam_setFramerate")
-            res = int(self.client.call_sync(p_cam_set_framerate, [(CRP_INT8, 61)])[0])
+            res = int(self.client.call_sync(p_cam_set_framerate, [(CRP_INT8, 50)])[0])
             if res < 0:
-                print(f"[Pixy2Fast] cam_setFramerate(61) returned {res}, ignoring.")
+                print(f"[Pixy2Fast] cam_setFramerate(50) returned {res}, ignoring.")
             else:
-                print("[Pixy2Fast] Camera min FPS set to 61.")
+                print("[Pixy2Fast] Camera FPS set to 50 (anti-flicker).")
         except RuntimeError as exc:
             print(f"[Pixy2Fast] cam_setFramerate not available: {exc}")
 

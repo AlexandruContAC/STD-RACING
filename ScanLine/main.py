@@ -20,6 +20,7 @@ import time
 # Force Qt to use xcb (X11) instead of wayland to avoid missing plugin crash
 os.environ["QT_QPA_PLATFORM"] = "xcb"
 import cv2
+import numpy as np
 import pixy2
 import config
 from processing.pipeline import ImageProcessor
@@ -41,15 +42,61 @@ CANHUBK3_PORT = 4242         # UDP port (from udp_rx.c MY_PORT)
 # ── Driving parameters ───────────────────────────────────────────────────
 FORWARD_SPEED = 0.0           # constant forward speed (linear.x)
 
-def get_speed_quadratic(steering_value):
-    # Ensure the input stays within bounds
-    x = max(-1.15, min(1.15, steering_value))
-    
-    # Calculate smooth speed drop
-    speed = 1.0 - (0.3403 * (x ** 2))
-    return speed
+# def is_finish_line(binary: np.ndarray) -> bool:
+#     """Detect the start/finish line: two horizontal dashes (9cm x 2cm each)
+#     separated by a ~5cm gap, centered on a 55cm track.
+# 
+#     Scans EVERY pixel row in a wide vertical band to catch the dashes
+#     regardless of distance.  The 5cm gap between the two dashes shows up
+#     as a narrow dark band flanked by white pixels near the image centre.
+#     """
+#     h, w = binary.shape[:2]
+#     mid = w // 2
+#     max_center_dev = w * 0.35          # allow car to be up to 35% off-center
+# 
+#     hits = 0
+# 
+#     # Wide scan range: y=100 to y=200 — catches the dashes at any
+#     # reasonable distance from the car (close AND medium range).
+#     for row_y in range(100, min(201, h)):
+#         row = binary[row_y, :]
+# 
+#         # Find innermost white pixel on each half
+#         left_half = row[:mid]
+#         left_indices = np.nonzero(left_half)[0]
+#         if len(left_indices) == 0:
+#             continue
+#         left = int(left_indices[-1])
+# 
+#         right_half = row[mid:]
+#         right_indices = np.nonzero(right_half)[0]
+#         if len(right_indices) == 0:
+#             continue
+#         right = int(right_indices[0] + mid)
+# 
+#         gap = right - left
+#         gap_center = (left + right) / 2.0
+# 
+#         # The 5cm gap at various distances: ~10px (far) to ~40px (close).
+#         # Use 70px threshold for safety margin.
+#         if gap < 70 and abs(gap_center - mid) < max_center_dev:
+#             hits += 1
+# 
+#     # 2cm dashes span ~4-15 pixel rows depending on distance.
+#     # Require only 2 rows to minimise missed detections.
+#     return hits >= 2
 
-def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_sock, target_addr, foxglove_streamer=None):
+
+# def get_speed_quadratic(steering_value):
+#     # Ensure the input stays within bounds
+#     x = max(-1.15, min(1.15, steering_value))
+
+#     # Calculate smooth speed drop
+#     speed = 1.0 - (0.3403 * (x ** 2))
+#     return speed
+
+def FSD(camera, processor, detector, controller, lidar, show_display,
+        tf, udp_sock, target_addr, foxglove_streamer=None):
     print("[ScanLine] Auto mode. Press Ctrl+C to quit.")
     speed = config.HEADLESS_SPEED if not show_display else 0.0
     obstacle_was_detected = False
@@ -58,7 +105,11 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
     # ── Lap detection via Zephyr odometry ─────────────────────────────────
     lap_detector = LapDetector(listen_port=4242)
     lap_detector.start()
-    
+
+    # ── Vision Lap Detection ──────────────────────────────────────────────
+    vision_lap_done = False
+    race_start_time = time.perf_counter()
+
     fps_ema = 0.0
     last_time = time.perf_counter()
 
@@ -88,21 +139,32 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
 
             # 4. Compute steering
             steering = controller.compute(result.weighted_center)
-                
+
             #actual_speed = get_speed_quadratic(steering)
-            if(abs(steering) > 0.9):
-                actual_speed = 0.65
+            if(abs(steering) > 0.75):
+                actual_speed = 0.6
             else:
-                actual_speed = 0.81
+                actual_speed = 0.75
 
             # 5. LIDAR emergency braking check
             lidar_dist_cm = lidar.get_front_distance() / 10.0  # mm → cm
             obstacle_detected_now = lidar_dist_cm < config.LIDAR_BRAKE_THRESHOLD_CM
 
+            # 5a. Vision Lap Detection check
+            if not vision_lap_done and time.perf_counter() - race_start_time > 12.0:
+                if result.lap_finished:
+                    print("\n[ScanLine] " + "=" * 50)
+                    print("[ScanLine]           🏁 VISION LAP DETECTED 🏁")
+                    print("[ScanLine] " + "=" * 50)
+                    vision_lap_done = True
+
             if obstacle_detected_now:
                 actual_speed = 0.0     # full stop (100% brake)
                 steering = 0.0         # straighten wheels while braking
                 status_str = f"BRAKE! dist={lidar_dist_cm:.1f}cm"
+            elif vision_lap_done:
+                actual_speed = 0.2     # Official Lap Done Cap
+                status_str = f"Slowed down by ScanLine to 0.2"
             else:
                 # keep actual_speed from steering logic above (0.8 or 0.9)
                 status_str = f"speed={actual_speed:+.2f}"
@@ -138,13 +200,12 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
                 fps_ema = (0.9 * fps_ema + 0.1 * current_fps) if fps_ema > 0 else current_fps
 
             # 6. Log
-            lap_dist = lap_detector.get_distance()
+#             lap_dist = lap_detector.get_distance()
             print(
                 f"fps={fps_ema:.1f}  "
                 f"center={result.weighted_center!s:>8s}  "
                 f"steering={steering:+.4f}  "
-                f"[{status_str}]  "
-                f"dist={lap_dist:.2f}m          ",
+                f"[{status_str}]          ",
                 end="\r",
             )
 
@@ -156,7 +217,7 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
             if show_display:
                 cv2.imshow("ScanLine Debug", debug_frame)
                 cv2.imshow("Binary", binary)
-           
+
             # 8. Handle keyboard input (single waitKey for all key events)
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
@@ -170,7 +231,8 @@ def FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_so
         send_cmd_vel(tf, udp_sock, target_addr, steering, actual_speed)
     finally:
         lap_detector.stop()
-    
+        pass
+
 
 def build_camera(backend: str):
     """Factory: return the appropriate CameraBase subclass."""
@@ -180,7 +242,7 @@ def build_camera(backend: str):
     elif backend == "pixy2fast":
         from camera.pixy2fast_cam import Pixy2FastCamera
         cam = Pixy2FastCamera()
-        
+
         # We need to open the camera first to be able to send the RPC command.
         # `camera.open()` will be safely ignored when called again inside `main()`.
         try:
@@ -188,7 +250,7 @@ def build_camera(backend: str):
             cam.set_lamps(1, 1)  # upper=1 (on), lower=1 (on)
         except Exception as e:
             print(f"[Pixy2Fast] Could not set lamps at initialization: {e}")
-            
+
         return cam
     elif backend == "webcam":
         from camera.pixy2_cam import Pixy2Camera
@@ -231,7 +293,7 @@ def run_manual_mode(tf, udp_sock, target_addr, camera, processor, detector):
                     (5, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
         cv2.imshow("Manual Control", debug_frame)
         cv2.imshow("Binary", binary)
-        
+
         #foxglove_streamer.update_debug_frame(debug_frame)
         #foxglove_streamer.update_binary_frame(binary)
 
@@ -260,7 +322,7 @@ def run_manual_mode(tf, udp_sock, target_addr, camera, processor, detector):
 
 
 def main() -> None:
-    
+
     parser = argparse.ArgumentParser(description="ScanLine track detector")
     parser.add_argument(
         "--camera",
@@ -375,13 +437,18 @@ def main() -> None:
         return
 
     if mode == "2":
-        FSD(camera, processor, detector, controller, lidar, show_display, tf, udp_sock, target_addr)
+        FSD(camera, processor, detector, controller, lidar,
+            show_display, tf, udp_sock, target_addr)
         return
     # ── Auto mode ─────────────────────────────────────────────────────────
     print("[ScanLine] Auto mode. Press Ctrl+C to quit.")
     speed = config.HEADLESS_SPEED if not show_display else 0.0
     obstacle_was_detected = False
-    
+
+    # ── Vision Lap Detection ──────────────────────────────────────────────
+    vision_lap_done = False
+    race_start_time = time.perf_counter()
+
     fps_ema = 0.0
     last_time = time.perf_counter()
 
@@ -403,15 +470,26 @@ def main() -> None:
             lidar_dist_cm = lidar.get_front_distance() / 10.0  # mm → cm
             obstacle_detected_now = lidar_dist_cm < config.LIDAR_BRAKE_THRESHOLD_CM
 
+            # 6. Vision Lap Detection check
+            if not vision_lap_done and time.perf_counter() - race_start_time > 10.0:
+                if result.lap_finished:
+                    print("\n[ScanLine] " + "=" * 50)
+                    print("[ScanLine]           🏁 VISION LAP DETECTED 🏁")
+                    print("[ScanLine] " + "=" * 50)
+                    vision_lap_done = True
+
             if obstacle_detected_now:
                 actual_speed = 0.0     # full stop (100% brake)
                 steering = 0.0         # straighten wheels while braking
                 status_str = f"BRAKE! dist={lidar_dist_cm:.1f}cm"
+            elif vision_lap_done:
+                actual_speed = 0.2     # Official Lap Done Cap
+                status_str = f"Slowed down by ScanLine to 0.2"
             else:
                 actual_speed = speed
                 status_str = f"speed={actual_speed:+.2f}"
 
-            # 5b. Log state transitions (only on change, not every frame)
+            # 7. Log state transitions (only on change, not every frame)
             if obstacle_detected_now and not obstacle_was_detected:
                 print(f"\n[LIDAR] OBSTACLE DETECTED at {lidar_dist_cm:.1f}cm — BRAKING!")
             elif not obstacle_detected_now and obstacle_was_detected:
@@ -419,7 +497,7 @@ def main() -> None:
 
             obstacle_was_detected = obstacle_detected_now
 
-            # 5. Send cmd_vel
+            # 8. Send cmd_vel
             send_cmd_vel(tf, udp_sock, target_addr, steering, actual_speed)
 
             # Calculate processing FPS after steering is calculated
@@ -430,7 +508,7 @@ def main() -> None:
                 current_fps = 1.0 / dt
                 fps_ema = (0.9 * fps_ema + 0.1 * current_fps) if fps_ema > 0 else current_fps
 
-            # 6. Log
+            # 9. Log
             print(
                 f"fps={fps_ema:.1f}  "
                 f"center={result.weighted_center!s:>8s}  "
@@ -439,7 +517,7 @@ def main() -> None:
                 end="\r",
             )
 
-            # 7. Visualize (optional)
+            # 10. Visualize (optional)
             debug_frame = draw_debug(frame, result, steering)
             #foxglove_streamer.update_debug_frame(debug_frame)
             #foxglove_streamer.update_binary_frame(binary)
@@ -448,7 +526,7 @@ def main() -> None:
                 cv2.imshow("ScanLine Debug", debug_frame)
                 cv2.imshow("Binary", binary)
 
-            # 8. Handle keyboard input (single waitKey for all key events)
+            # 11. Handle keyboard input (single waitKey for all key events)
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 break

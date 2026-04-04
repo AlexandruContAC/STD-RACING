@@ -38,6 +38,8 @@ class ScanResult:
     intersection_left: Optional[int] = None
     intersection_right: Optional[int] = None
     intersection_center: Optional[float] = None
+    lap_finished: bool = False
+
 
 
 class ScanLineDetector:
@@ -152,6 +154,42 @@ class ScanLineDetector:
         else:
             weighted_center = self._weighted_center(centers)
 
+        # ── Lap detection ──────────────────────────────────────────────────
+        # Check closest 2 scanlines (the first two configured rows, e.g., 190, 185)
+        # We search from the found white point towards the center/edges to find
+        # the finish line dashes. If a second white point is found, the lap is finished.
+        lap_finished = False
+        for idx in range(min(2, len(self._rows))):
+            row_y = self._rows[idx]
+            if row_y < 0 or row_y >= h:
+                continue
+
+            scan_row = binary[row_y, :]
+            left = left_edges[idx]
+            right = right_edges[idx]
+            jump = 30  # pixels to skip to bypass the line's own thickness
+
+            if left is None or right is None:
+                continue
+
+            if left is not None:
+                # User's logic: search from left found point to the center
+                if any(scan_row[x] == 255 for x in range(left + jump, mid)):
+                    lap_finished = True
+                # Also search towards the left edge in case 'left' was the inner dash
+                if any(scan_row[x] == 255 for x in range(left - jump, -1, -1)):
+                    lap_finished = True
+
+            if right is not None:
+                # Search from right found point to the center
+                if any(scan_row[x] == 255 for x in range(right - jump, mid, -1)):
+                    lap_finished = True
+                # Also search towards the right edge
+                if any(scan_row[x] == 255 for x in range(right + jump, w)):
+                    lap_finished = True
+
+
+
         return ScanResult(
             rows=list(self._rows),
             left_edges=left_edges,
@@ -163,33 +201,34 @@ class ScanLineDetector:
             intersection_left=int_left if int_center is not None else None,
             intersection_right=int_right if int_center is not None else None,
             intersection_center=int_center,
+            lap_finished=lap_finished,
         )
 
     # ── edge finding ──────────────────────────────────────────────────────
 
     @staticmethod
     def _find_edge_left_half(row: np.ndarray, mid: int) -> Optional[int]:
-        """Scan from the MIDPOINT outward toward the LEFT edge [mid-1 … 0].
+        """Scan from the MIDPOINT outward toward the LEFT edge [mid-1 … 0] every 2 pixels.
 
         Returns the X position of the first white pixel found moving
         leftward from the center, or None if no white pixel exists.
         """
-        left_half = row[:mid]
+        left_half = row[:mid:2]
         indices = np.nonzero(left_half)[0]
         # Take the rightmost (closest to mid) white pixel
-        return int(indices[-1]) if len(indices) > 0 else None
+        return int(indices[-1] * 2) if len(indices) > 0 else None
 
     @staticmethod
     def _find_edge_right_half(row: np.ndarray, mid: int) -> Optional[int]:
-        """Scan from the MIDPOINT outward toward the RIGHT edge [mid … width).
+        """Scan from the MIDPOINT outward toward the RIGHT edge [mid … width) every 2 pixels.
 
         Returns the X position of the first white pixel found moving
         rightward from the center, or None if no white pixel exists.
         """
-        right_half = row[mid:]
+        right_half = row[mid::2]
         indices = np.nonzero(right_half)[0]
         # Take the leftmost (closest to mid) white pixel
-        return int(indices[0] + mid) if len(indices) > 0 else None
+        return int(indices[0] * 2 + mid) if len(indices) > 0 else None
 
     # ── center computation ────────────────────────────────────────────────
 
