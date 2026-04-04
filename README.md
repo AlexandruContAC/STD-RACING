@@ -5,9 +5,9 @@
 See [documentation](https://cognipilot.org/).
 
 
-USE ./deploy.sh (ScanLine20fps/ScanLine/deploy.sh) to deploy the python code to NAV-Q-PLUS.
-Run the python script when SSH-ed into NAV-Q-PLUS with: python3 main.py
-(Deprecated)The script also compiles the necessary files.
+./deploy.sh from scanline to push the code to the nav q plus
+in nxp directory : when connected to jtag : west build -b mr_canhubk3 & west flash to flash the canhub
+
 
 !!Modify deploy.sh with the correct hostname/ip address.
 
