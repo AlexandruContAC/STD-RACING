@@ -67,10 +67,10 @@ void pwm_update(const synapse_msgs_Status* status, const synapse_msgs_Actuators*
         uint32_t pulse = pwm.center;
         if (pwm.type == PWM_TYPE_NORMALIZED) {
             float input = armed ? actuators->normalized[pwm.index] : 0;
-            if (input < -1.15f) {
-                input = -1.15f;
-            } else if (input > 1.15f) {
-                input = 1.15f;
+            if (input < -1.2f) {
+                input = -1.2f;
+            } else if (input > 1.2f) {
+                input = 1.2f;
             }
             //LOG_ERR("NORM %f %d %d %d", input, pwm.min, pwm.center, pwm.max);
             if (input > 0) {

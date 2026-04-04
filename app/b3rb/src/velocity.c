@@ -104,13 +104,13 @@ static void update_state(context *ctx) {
 
   switch (ctx->state) {
   case STATE_NORMAL:
-    if (dist > 0.4) {
+    if (dist > 0.5) {
       ctx->state = STATE_LAP_STARTED;
       //LOG_INF("Lap started (dist=%.2f)", dist);
     }
     break;
   case STATE_LAP_STARTED:
-    if (dist < 0.25) {
+    if (dist < 0.1) {
       ctx->state = STATE_LAP_DONE;
       //LOG_INF("Lap done (dist=%.2f) — slowing to 0.2", dist);
     }
